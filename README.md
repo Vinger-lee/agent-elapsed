@@ -1,64 +1,315 @@
 # agent-elapsed
 
-嵌入 Agent 自身 TUI / 原生 UI 的长任务用时组件。组件提供任务 hook、状态数据和 TUI 文本渲染，不包含网页、HTTP 服务或独立窗口。用户安排任务时开始计时；普通聊天与短任务默认隐藏，完成、取消或失败后自动收起。
+<p align="center">
+  <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237 tests">
+  <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="Runtime: numpy only">
+  <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Model">
+  <br>
+  <b>⏱️ An honest ETA for long-running agent tasks — computed locally, in milliseconds, with no LLM in the loop.</b>
+</p>
 
-运行时仅依赖 numpy，使用复合泊松 × 对数正态采样（默认 5000 条路径），不调用 LLM、不拟合、不读遥测、不访问网络。语义分类调用与真实日志适配由宿主 Agent 提供。
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="README_CN.md">中文</a> ·
+  <a href="docs/i18n/README.ja.md">日本語</a> ·
+  <a href="docs/i18n/README.ko.md">한국어</a> ·
+  <a href="docs/i18n/README.fr.md">Français</a> ·
+  <a href="docs/i18n/README.es.md">Español</a> ·
+  <a href="docs/i18n/README.ru.md">Русский</a> ·
+  <a href="docs/i18n/README.ar.md">العربية</a>
+</p>
 
-## 环境与测试
+`agent-elapsed` is a drop-in elapsed-time widget for agents that run long tasks. When a host agent
+starts a task, the component produces a *"6–14 minutes"* style interval **in parallel** with the task
+itself; when the task ends, prediction and reality are drawn on the same axis and the model slowly
+gets better at its job.
 
-需要 Python ≥3.11 与 numpy ≥2.0；测试只用标准库 `unittest`，不必安装项目本身。
+Inside it is deliberately small: task hooks, a state protocol, a TUI text renderer and a
+line-oriented JSON bridge. No web page, no HTTP server, no separate window. At runtime it needs
+**nothing but numpy** — no LLM call, no fitting, no telemetry reads, no network access.
+
+> **Important.** Everything here is validated against **synthetic telemetry and independent numerical
+> experiments**. There is no claim of measured accuracy on real agent logs, because no real log ships
+> with the repository. `constants.json` is a cold-start prior, not a trained model. The component
+> hides its interval until a fitted table has passed the calibration gate — a prior is never dressed
+> up as a validated prediction.
+
+---
+
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [Quickstart](#quickstart)
+- [The model, in full](#the-model-in-full)
+- [Quantiles and their uncertainty](#quantiles-and-their-uncertainty)
+- [Calibration and the acceptance gate](#calibration-and-the-acceptance-gate)
+- [Embedding it in a host](#embedding-it-in-a-host)
+- [Offline commands](#offline-commands)
+- [Telemetry contract](#telemetry-contract)
+- [Repository layout](#repository-layout)
+- [Verification](#verification)
+- [What it does not claim](#what-it-does-not-claim)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Why this exists
+
+An agent that says "this will take a while" is not giving an estimate. A useful estimate has to
+satisfy four constraints at once, and they pull in different directions:
+
+1. **Parallel.** It must exist while the task is still running, not after it finishes.
+2. **Cheap.** It cannot burn the host's token budget or its own wall clock — a prediction that takes
+   longer than the task is worthless.
+3. **Honest.** Too narrow an interval is worse than no interval: it teaches users to distrust every
+   future number.
+4. **Self-correcting.** It must improve from the host's own task history, without a data pipeline.
+
+The design follows from those constraints. One-shot classification (which an LLM can do) plus a
+closed-form‑and‑sampling statistical model (which an LLM must not do) splits the problem: the host
+supplies task features and class probabilities, this component owns all the arithmetic. Because the
+model is a small parametric family, the moments are closed-form, the quantiles come from a fixed
+number of Monte Carlo paths, and a whole prediction is deterministic given a seed — reproducible,
+auditable and about five milliseconds on a laptop.
+
+---
+
+## Quickstart
+
+Requirements: Python ≥3.11 and numpy ≥2.0. The test suite uses only the standard library.
 
 ```bash
-python3 -c "import numpy; print(numpy.__version__)"   # 需要 ≥2.0；没有就 pip install numpy
-python3 -m unittest discover -s tests -t . -v
+python3 -c "import numpy; print(numpy.__version__)"   # needs >= 2.0
+python3 -m unittest discover -s tests -t . -v          # 237 tests
 ```
 
-下面所有命令都在仓库根目录执行；`offline.*` / `examples/` 的 `sys.path` 已指向根目录，无需额外配置。
-
-## 直接嵌入宿主
-
-查看 TUI 宿主中的完整生命周期：
+Watch the full host lifecycle in a terminal:
 
 ```bash
-python3 examples/tui_host.py            # --plain 打印不带终端控制码的帧
+python3 examples/tui_host.py            # add --plain for frames without terminal control codes
 ```
 
-- Python 宿主：`ElapsedHooks` 提供任务开始、完成、取消、失败 hook，后台计算一次预估；`render_tui(state)` 返回宿主布局中的文本块。
-- 原生 UI 宿主：订阅 `WidgetState`，把任务列表绑定到宿主自己的控件；空列表时折叠该区域。
-- 其他语言：启动常驻 `python -m agent_elapsed.bridge`，通过逐行 UTF-8 JSON 发送任务事件、接收组件状态。无需增加 Python 以外的运行时依赖。
+Run the resident line-oriented bridge that a non-Python host can drive:
 
-默认长任务门槛为 **60 秒，可配置**。宿主明确标记 `long_task=True` 时立即展示；否则仅在已校准预估 P50 达标或实际耗时达标时显示。冷启动先验不能区分任务长短，不用它自动触发展示；未校准时只显示真实已用时及“校准中”，隐藏预测区间和超出预估提示。普通聊天事件不启动计时或估算。
+```bash
+python3 -m agent_elapsed.bridge --constants constants.json --env default --long-task-seconds 60
+```
 
-接入代码、协议及线程边界见 [docs/integration.md](docs/integration.md)。这些是通用组件和宿主示例；具体 Agent 需要把自己的任务生命周期接到 hook，并在自己的布局中挂载组件。
-
-## 底层预估接口
+Predict one task directly:
 
 ```python
 import json
 from agent_elapsed.constants import load_tables, pick_env
 from agent_elapsed.estimate import estimate_task
 
-tables = load_tables('constants.json')
-table = pick_env(tables, 'my-model|my-host')
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
 g = {
-    'task_class': 'patch',
-    'touched_files': '2-3',
-    'verification_loops': '2',
-    'needs_network': False,
-    'plan_steps': '4-8',
+    "task_class": "patch",
+    "touched_files": "2-3",
+    "verification_loops": "2",
+    "needs_network": False,
+    "plan_steps": "4-8",
 }
-result = estimate_task(g, [('patch', .65), ('debug', .35)], table=table, seed=7)
-saved_estimate = json.dumps(result.to_dict(), ensure_ascii=False)
+result = estimate_task(g, [("patch", .65), ("debug", .35)], table=table, seed=7)
+
+result.p50, result.p90, result.expected      # quantiles and the analytic mean
+result.p50_se, result.p90_se                 # Monte Carlo standard error of each quantile
+result.calibrating                           # True => do not show the interval yet
+saved = json.dumps(result.to_dict(), ensure_ascii=False)
 ```
 
-`constants.json` 是冷启动先验，不能当作已训练模型。`fit_id`、`seed` 与 `g_schema_version` 应随开始时的预估保存，结束后使用同一份预估复盘。底层接口保留原始先验结果用于诊断；自定义宿主也必须先检查 `result.calibrating`，只有已校准时才用 `agent_elapsed.presentation.format_band(result.p50, result.p90)` 展示预测区间。
+Persist `fit_id`, `seed` and `g_schema_version` together with the estimate you actually showed the
+user. Afterwards the exact same prediction can be replayed against the real duration — that is what
+makes offline calibration honest rather than retrospective.
 
-数学推导、已修复问题及准确性证据见 [docs/accuracy-audit.md](docs/accuracy-audit.md)；
-公式层这轮升级（φ 保均值与解析求根、分位数不确定度、IRLS 数值细节）见 [docs/math-upgrade.md](docs/math-upgrade.md)。闭式矩是在模型假设下正确的计算，分位数是蒙特卡洛近似；没有能够无条件精确预知未来任务耗时的公式。目前只有合成数据验证，没有真实 Agent 的预测准确率。实际已用时来自单调时钟，与预测分开处理。
+---
 
-## 遥测与离线命令
+## The model, in full
 
-`TelemetryStore(events_path, tasks_path, rejects_path)` 提供追加写接口。步事件记录 `task_id/op/t_start/t_end/ok/tool/v`；任务记录包含 `g_pred/g_pred_probs/g_final/total_wall/censored/model_id/host/estimator_wall/g_schema_version/v`，详细契约见设计文档。失败步骤保留；取消任务的完整步骤参与步长拟合，任务计数、覆盖率和验收比较排除取消任务。每个任务 ID 必须唯一，步骤和任务通过它关联。
+A task is a **serial** chain of steps grouped into four operation types:
+`llm`, `tool`, `build`, `net`. Given a feature vector `g` and a latent task class `C = c`:
+
+```
+N_j | C=c, g  ~  Poisson(λ_jc),     λ_jc = exp(clip(b_j + w_jᵀ g_c, -20, 20))
+X_ji          ~  LogNormal(μ_j^eff, s_j²),   s_j² = σ_j² · max(φ, 1)
+μ_j^eff       =  μ_j − (s_j² − σ_j²) / 2
+T             =  Σ_j Σ_{i=1..N_j} X_ji
+```
+
+Assumptions, stated plainly: conditionally on the class, operation types are independent; step
+durations are i.i.d. within an operation type and independent of the counts; every step is serial and
+non-overlapping; parameters and class weights are fixed for one prediction.
+
+**φ is a pure dispersion parameter.** Enlarging σ and lowering the log-mean by exactly half the
+increment keeps the lognormal mean fixed:
+
+```
+E[X_j]   =  exp(μ_j + σ_j²/2)          (independent of φ)
+E[X_j²]  =  E[X_j]² · exp(s_j²)        (grows with φ)
+```
+
+That matters because what is being repaired is *spread*, not *level*. An earlier version inflated σ
+without compensating μ, so φ quietly pushed the predicted mean and every upper quantile upward while
+claiming to only widen the interval.
+
+Because counts are Poisson and independent of step durations:
+
+```
+E[Σ_i X_ji]    = λ_jc · E[X_j]
+Var(Σ_i X_ji)  = E[N_j]·Var(X_j) + Var(N_j)·E[X_j]²  =  λ_jc · E[X_j²]
+```
+
+Note the second moment, not the variance: a compound Poisson's variance is `λ·E[X²]`.
+
+Class uncertainty is handled by the law of total variance, with **one latent class drawn per task
+path** and shared by all operation types:
+
+```
+M_c  = Σ_j λ_jc · E[X_j]
+V_c  = Σ_j λ_jc · E[X_j²]
+
+E[T]   = Σ_c p_c M_c
+Var(T) = Σ_c p_c V_c            (within-class)
+       + Σ_c p_c (M_c − E[T])²  (between-class)
+```
+
+Collapsing the mixture into a single Poisson with the averaged rate loses the between-class term. For
+the hand-checkable fixture in `tests/test_math_audit.py` (jumps of exactly 1 s, class rates 1 vs 9
+across four operations, weights ½/½) the true mean is 20 and the true variance is **276**, while the
+averaged-rate model gives 20. Dropping the shared-class correlation makes the distribution far too
+narrow — nearly half of the paths belong below 10 s, and the averaged model puts about 1 % there.
+
+The mixture also means operation types are **not** independent unconditionally: their class-induced
+covariance is carried by squaring the complete class mean `M_c`.
+
+**How φ gets its value.** Only the second moment depends on φ, through `exp(φ·σ_j²)`, so the model's
+mean relative variance is a monotone exponential sum
+
+```
+mean_t[ Var(T_t)/E[T_t]² ]  =  mean_t[ between-class relative variance ]     ← φ-free
+                             + Σ_j B_j · exp(φ · σ_j²)
+```
+
+with `B_j = mean_t[ λ̄_tj · E[X_j]² / E[T_t]² ]`. The target `r = mean_t[ ((y_t − E[T_t])/E[T_t])² ]`
+comes from holdout residuals, and the fixed point is found by bisection on `[1, 25]`:
+
+* `f(1) ≥ 0` → φ = 1 (the table is already wide enough; φ is not allowed to *narrow* below step noise);
+* `f(25) ≤ 0` → φ = 25 (clipped; the table is not "fixed", it is reported as bounded);
+* otherwise the interior solution, where the analytic CV² equals the residual mean square **exactly**.
+
+For equal σ the closed form `φ = 1 + ln(r)/σ²` is available and used as a cross-check.
+
+---
+
+## Quantiles and their uncertainty
+
+Quantiles are Monte Carlo — 5000 paths by default — and no normal approximation is attempted anywhere.
+The atom at zero is handled explicitly:
+
+```
+P(T = 0) = Σ_c p_c · exp(−Σ_j λ_jc)
+```
+
+so the predictive distribution is not continuous. `predict()` therefore reports, next to `p50` and
+`p90`, a distribution-free interval obtained by inverting the exact binomial rank test: the number of
+samples below the population quantile is `Binomial(m, τ)`, hence
+
+```
+k = m·τ ,   h = z₀.₉₇₅ · √(m·τ·(1−τ))
+interval = ( S_(k−h) , S_(k+h) )        # order statistics, clipped to 0..m−1
+```
+
+No density estimate is needed, which matters exactly where a kernel/SE formula breaks: at the atom the
+interval collapses to a single point instead of inventing a narrow band.
+
+Measured behaviour (`tests/test_math_upgrade.py`, 300 independent repetitions at m = 2000):
+
+| τ | nominal | measured coverage |
+|---|---|---|
+| 0.5 | 95 % | 0.960 |
+| 0.9 | 95 % | 0.960 |
+
+At m = 5000 on the reference table the P50 interval is about ±22 s (SE ≈ 11 s) and P90 about ±89 s
+(SE ≈ 46 s). That is the resolution of 5000 paths; a tighter P90 costs paths, not cleverness. Heavy
+tails are the reason: at φ = 4 the sample *variance* reaches only 83 % of its analytic value at 120k
+paths and 96 % at 400k, while quantiles converge much faster.
+
+---
+
+## Calibration and the acceptance gate
+
+A fitted table is never trusted blindly. A candidate must beat the online table on a **temporally
+split** holdout before it is swapped in atomically.
+
+### What is measured
+
+* **Randomized predictive rank (PIT).** For observation `y` against `m` predictive samples,
+  `R = (#{Sᵢ < y} + u·(#{Sᵢ = y} + 1)) / (m + 1)` with independent `u ~ U(0,1)`. Under
+  exchangeability `R` is uniform **even with ties and even for a fully degenerate distribution** —
+  which is what makes the zero atom safe to evaluate.
+* **Quantile coverage bracket.** For a discrete quantile the correct condition is
+  `P(Y < q_τ) ≤ τ ≤ P(Y ≤ q_τ)`, not an equality. The tolerance is two standard errors,
+  `2√(τ(1−τ)/n)`, because a fixed ±0.05 is barely one σ at n = 20 and would reject fair models.
+* **KS on the PIT sample**, as a diagnostic with its asymptotic p-value: an approximation, not a proof
+  of the data-generating model.
+* **Paired pinball loss.** The same task with the same seed is predicted by both models, so the
+  comparison is paired. `gate.evaluate` also reports `paired_diff`, `paired_diff_se` and `paired_z`, so
+  a rejection carries its uncertainty instead of hiding a coin flip.
+
+### Thresholds and state transitions
+
+| Rule | Value |
+|---|---|
+| Complete tasks in the store | ≥ 80 |
+| Tasks on the fitting side | ≥ 60 |
+| Holdout | `max(20, ceil(20 %))`, always the most recent slice |
+| New step observations per operation | ≥ 50 |
+| Dispersion φ | clipped to `[1, 25]`, solved by bisection |
+| Acceptance | calibration passes **and** paired pinball is not worse (`require_strict` demands strictly better) |
+
+A candidate is written with a temporary file plus `os.replace`, keeping the previous table as
+`constants.prev.json`; `rollback` restores it. A rejected candidate leaves both the live table and the
+rollback copy untouched. When the store holds telemetry for an environment but not enough of it, the
+CLI writes the prior and explicitly does **not** promote a candidate — "insufficient data" is exit
+code 2, never a silent pass.
+
+Drift is detected on the same pinball series that scores the model: `log1p` of each score, EWMA over
+the most recent 100 points, a `2σ` band from a fixed stable baseline, and two consecutive crossings
+before alerting. The baseline is deliberately *not* updated with the data being tested, otherwise a
+permanent shift would quietly migrate into the baseline and hide itself.
+
+---
+
+## Embedding it in a host
+
+Three integration surfaces, one lifecycle core:
+
+| Host kind | Surface | Entry point |
+|---|---|---|
+| Python agent | hooks + text renderer | `ElapsedHooks`, `render_tui(state)` |
+| Native UI (Qt, SwiftUI, web view, …) | state subscription | `WidgetState` → your own widgets |
+| Any other language | resident process, one JSON object per line | `python -m agent_elapsed.bridge` |
+
+Display gating is intentionally conservative, because a wrong interval is worse than a hidden one:
+
+* the default long-task threshold is **60 s** and is configurable;
+* `long_task=True` from the host shows the widget immediately;
+* otherwise the widget appears once a **calibrated** P50 crosses the threshold, or real elapsed time
+  does;
+* while `calibrating` is true only real elapsed time and the word "calibrating" are shown — the prior
+  interval and the over-estimate warning stay hidden;
+* ordinary chat never starts a timer or an estimate.
+
+Full protocol, thread boundaries and error handling: [docs/integration.md](docs/integration.md).
+
+---
+
+## Offline commands
 
 ```bash
 python3 -m offline.cli refit    --store data --constants constants.json --env 'my-model|my-host'
@@ -66,38 +317,161 @@ python3 -m offline.cli report   --constants constants.json --env 'my-model|my-ho
 python3 -m offline.cli rollback --constants constants.json
 ```
 
-复盘报告可加 `--store data --estimate out/estimate.json --actual 500`：显示实际落点、最近 100 个完整任务的 P90 上限覆盖率、按 `g_pred.task_class` 分组的误差表及漂移徽章。HTML 内联数据，不依赖服务器或外部资源。`--estimate` 是任务开始时保存的 `EstResult.to_dict()` JSON。
+`report` also accepts `--store data --estimate out/estimate.json --actual 500` to draw the real landing
+point on the same axis, the P90 upper coverage of the last 100 complete tasks, the error table grouped
+by `g_pred.task_class`, and a drift badge. The HTML inlines its data and loads nothing from the
+network.
 
-重拟合先按 `(model_id, host)` 隔离环境，再按时间划分；每类操作在拟合侧新增有效观测至少 50，完整任务总数至少 80、拟合任务至少 60。验证集是最后 `max(20, ceil(20%))` 个完整任务。候选必须通过 PIT/KS、覆盖率容差及同任务同种子的配对 pinball 比较，才原子替换当前表，并保留 `constants.prev.json`。拒绝时现有常数和回滚副本保持原样。
-
-退出码：`0` 成功；`1` 验收拒绝；`2` 数据不足（JSON 中列出缺口和描述性检查）；`3` 未找到环境遥测；`4` 没有回滚副本。冷启动在已有环境遥测但样本不足时写出先验，不把候选自动上线。
-
-## 统计与集成说明
-
-- 21 列 one-hot 保留全部水平，截距不惩罚、系数 ridge；计数只使用 `g_pred`。
-- 类别混合每条路径只抽一次共享任务类别；总方差包含类别内及类别间两部分，不能用平均泊松率代替混合分布。
-- `phi >= 1` 是**保均值的纯离散度**：σ 放大、对数均值同步下移 `(s²−σ²)/2`，`E[X]` 与 φ 无关；
-  φ 由留出残差解析求出（模型相对方差对 φ 是单调指数和，二分求根），内点解处解析 CV² 与残差均方精确相等。
-  它只修离散度，不修偏差，也不是重试相关性的解。
-- 校准使用随机化预测秩处理零步骤原子；离散分位数检查严格下方覆盖率与上限覆盖率夹住名义水平，连续分布下恢复双侧判据。
-- 分位数带蒙特卡洛不确定度：`predict()` / `EstResult` 输出 `p50_ci/p90_ci` 与 `p50_se/p90_se`（秩区间，分布无关，
-  零步骤原子处自然退化）。5000 条路径下真值表的 P90 区间约 ±89 s——这就是 m 的分辨率，想更窄就加路径。
-- 漂移检测对右偏 pinball 采用 `log1p` 后的最近 100 项 EWMA、基线 2σ 和连续两次越界规则；报警后缩短拟合折扣半衰期。
-- “P90 覆盖率”指 `actual <= P90`，不是实际落在 P50–P90 显示带中的比例；连续校准分布的该显示带约包含 40% 概率。
-- 宿主提供任务意图、特征分类及遥测适配器；新增 hook 已实现后台数学估算和用时记录。若分类依赖模型，模型调用及独立资源配额由宿主安排。
-
-## 文档
-
-| 文件 | 内容 |
+| Exit code | Meaning |
 |---|---|
-| [docs/design.md](docs/design.md) | 数据边界、统计定义、验收判据的设计依据 |
-| [docs/embedded-widget.md](docs/embedded-widget.md) | 嵌入宿主 TUI / 原生 UI 的增量设计 |
-| [docs/integration.md](docs/integration.md) | 接入代码、事件协议、线程边界 |
-| [docs/accuracy-audit.md](docs/accuracy-audit.md) | 数学推导、校准修正、准确性边界（哪里能承诺、哪里不能） |
-| [docs/math-upgrade.md](docs/math-upgrade.md) | v1.1 公式升级的推导、验证与明确未做的事 |
-| [docs/implementation-notes.md](docs/implementation-notes.md) | 实现细节与早期草稿的修正记录 |
-| [docs/validation.md](docs/validation.md) | 可复现的验收记录 |
+| `0` | success |
+| `1` | rejected by the acceptance gate |
+| `2` | insufficient data (the JSON lists deficits and descriptive checks) |
+| `3` | no telemetry for that environment |
+| `4` | no rollback copy |
 
-## 许可
+---
 
-MIT，见 [LICENSE](LICENSE)。
+## Telemetry contract
+
+Two tables, both JSONL, both append-only. Derived quantities (`X`, `n_j`) are deliberately **not**
+stored: anything derived can drift away from its source.
+
+* Step event: `task_id`, `op`, `t_start`, `t_end`, `ok`, `tool`, `v`
+* Task record: `task_id`, `g_pred`, `g_pred_probs`, `g_final`, `total_wall`, `censored`, `model_id`,
+  `host`, `estimator_wall`, `g_schema_version`, `v`
+
+Rules the code enforces rather than documents:
+
+* `t_end > t_start`, finite timestamps, `op` in the known set, no duplicate `(task_id, op, t_start)`;
+* violating rows go to `rejects.jsonl` — never silently dropped, because the rows that get dropped are
+  usually the very long or abnormal ones, and dropping them biases the mean downward in the same
+  direction as censoring;
+* fitting reads `g_pred` only; touching `g_final` would be label leakage, and a test fits twice with
+  `g_final` tampered and requires identical coefficients;
+* cancelled tasks contribute their completed steps to step-length fitting (a step that happened is a
+  complete observation) but are excluded from counts, coverage and acceptance (their total is only a
+  lower bound);
+* every task id is unique; steps and tasks are joined by it.
+
+---
+
+## Repository layout
+
+```
+agent-elapsed/
+├── constants.json               # cold-start prior table (per environment)
+├── agent_elapsed/               # runtime: no I/O, no fitting, no network
+│   ├── model.py                 #   compound Poisson × lognormal, moments, sampler, quantiles
+│   ├── features.py              #   21-column one-hot encoding of g, top-2 class mixing
+│   ├── constants.py             #   table shape, env selection, the φ entry point
+│   ├── estimate.py              #   the single runtime entry point (EstResult)
+│   ├── hooks.py                 #   task lifecycle, display policy, background estimate
+│   ├── presentation.py          #   the shared "6–14 min" text
+│   ├── tui.py                   #   TUI text block renderer
+│   ├── bridge.py                #   resident stdio JSON protocol
+│   └── schema.py, store.py      #   telemetry contract, append-only store
+├── offline/                     # fitting, calibration, gate, drift, synthetic data, report
+│   ├── fit_counts.py            #   weighted ridge Poisson regression (IRLS/Newton)
+│   ├── fit_step.py              #   log-step Normal-Inverse-Gamma posterior
+│   ├── calibrate.py             #   randomized PIT, coverage, KS, pinball
+│   ├── gate.py                  #   dispersion solve, paired acceptance, atomic swap, rollback
+│   ├── drift.py                 #   EWMA drift detector, discount weights
+│   ├── synth.py                 #   hidden-truth generator (the only place with ground truth)
+│   └── viz.py, cli.py           #   offline HTML report, explicit command surface
+├── examples/tui_host.py         # a complete host lifecycle in a terminal
+├── templates/report.html        # inline-data report template
+├── docs/                        # see the documentation table below
+└── tests/                       # 237 tests, standard-library unittest only
+```
+
+---
+
+## Verification
+
+```bash
+python3 -B -m unittest discover -s tests -t .     # 237 tests
+```
+
+End-to-end on synthetic telemetry (400 tasks, seed 61, environment `m-a|h-a`, 15 047 step events, 351
+complete tasks, 32 holdout tasks):
+
+| Quantity | Result |
+|---|---|
+| Acceptance gate | accepted |
+| P50 / P80 / P90 upper coverage | 0.594 / 0.844 / 0.969 |
+| PIT KS D / p | 0.129 / 0.627 |
+| Candidate paired pinball | 242.8 |
+| Prior paired pinball | 481.9 |
+| Paired difference / z | −239.0 / −2.77 |
+| Fitted φ | 1.0 (lower clip: the table's own dispersion already covers the holdout) |
+
+Step-length recovery against the hidden truth in `offline/synth.py`:
+
+| op | μ fitted / truth | σ fitted / truth | step observations |
+|---|---|---|---|
+| llm | 2.234 / 2.197 | 0.924 / 0.90 | 1789 |
+| tool | 0.765 / 0.788 | 0.722 / 0.72 | 2613 |
+| build | 5.305 / 5.347 | 1.097 / 1.10 | 339 |
+| net | 1.760 / 1.792 | 0.860 / 0.88 | 721 |
+
+A single 5000-path prediction takes about **5 ms** on a laptop.
+
+These numbers show that the implementation is internally consistent and recovers a known generator.
+They are not evidence about real agent logs. Full record: [docs/validation.md](docs/validation.md).
+
+---
+
+## What it does not claim
+
+Being explicit about the boundary is part of the product:
+
+* **No ground truth about real tasks.** No real log ships here; `constants.json` is a prior.
+* **Serial summation is not wall time.** Overlapping tool calls, nested timers, parallel branches and
+  unrecorded queueing all break the model. Parallel work needs an execution graph, which this version
+  deliberately does not invent.
+* **Conditional independence is an assumption**, not a finding. Retry correlations are not modelled;
+  φ is a dispersion knob, not a correlation model.
+* **Point estimates of parameters.** The NIG posterior shrinks step parameters, but predictions use
+  point estimates; count-regression and classifier uncertainty are not propagated.
+* **Cancellation may bias the fit** if it correlates with duration; there is no survival model, only
+  the lower-bound-aware split described above.
+* **Monte Carlo quantiles carry sampling error** — now reported rather than hidden, but still error.
+* **The KS p-value is asymptotic.** It is a diagnostic near the p > 0.05 threshold, not a proof.
+* **The classifier belongs to the host.** Class probabilities are taken as given; if they are
+  miscalibrated, so is the mixture.
+
+---
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/design.md](docs/design.md) | Data boundaries, statistical definitions, acceptance criteria |
+| [docs/embedded-widget.md](docs/embedded-widget.md) | Embedding the widget in a host TUI / native UI |
+| [docs/integration.md](docs/integration.md) | Integration code, event protocol, thread boundaries |
+| [docs/accuracy-audit.md](docs/accuracy-audit.md) | Derivations, calibration fixes, where accuracy claims stop |
+| [docs/math-upgrade.md](docs/math-upgrade.md) | The v1.1 formula upgrade: derivations, verification, non-goals |
+| [docs/implementation-notes.md](docs/implementation-notes.md) | Implementation details and corrections to earlier drafts |
+| [docs/validation.md](docs/validation.md) | Reproducible acceptance record |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow, test and translation rules |
+| [SECURITY.md](SECURITY.md) | Threat model and how to report a vulnerability |
+
+### Languages
+
+`README.md` (English) and [`README_CN.md`](README_CN.md) (中文) are the authoritative pair; the
+translations under [`docs/i18n/`](docs/i18n/) track them section by section. Code identifiers, feature
+levels, telemetry field names and JSON keys are deliberately **not** translated — translating them
+would break host integrations. Every language file is checked by `tests/test_docs.py`, which asserts
+that the language switcher, the document table and every referenced path resolve.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+## License
+
+[MIT](LICENSE) © agent-elapsed contributors

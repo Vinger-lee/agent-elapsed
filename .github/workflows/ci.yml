@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install numpy
+        run: python -m pip install --upgrade pip numpy
+      - name: Run the test suite
+        run: python -m unittest discover -s tests -t . -v
+      - name: Byte-compile the packages and examples
+        run: python -m compileall -q agent_elapsed offline examples tests
+      - name: Refit, gate and report on synthetic telemetry (end-to-end smoke)
+        if: matrix.python-version == '3.11'
+        run: |
+          python - <<'PY'
+          import os
+          from offline.synth import generate_tasks
+          from agent_elapsed.store import TelemetryStore
+          steps, tasks = generate_tasks(200, seed=61)
+          store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+          for row in steps:
+              assert store.append_step(row)
+          for row in tasks:
+              assert store.append_task(row)
+          print("wrote", len(steps), "steps", len(tasks), "tasks")
+          PY
+          python -m offline.cli refit  --store data --constants constants.json --env 'm-a|h-a' || code=$?
+          echo "refit exit=${code:-0}"
+          python -m offline.cli report --constants constants.json --env 'm-a|h-a' --out out/report.html
+          test -s out/report.html
