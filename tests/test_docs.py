@@ -6,7 +6,7 @@ instead of trusting a copy-paste session.
 """
 from __future__ import annotations
 
-import os
+import posixpath
 import re
 import unittest
 from pathlib import Path
@@ -63,13 +63,18 @@ class ReadmeLanguageTest(unittest.TestCase):
                 self.assertTrue((ROOT / relative).is_file(), f"缺少 {relative}")
 
     def test_every_file_carries_the_full_language_switcher(self):
+        # posixpath, not os.path: the links in the documents always use forward slashes, while
+        # os.path.relpath would hand back backslashes on Windows and fail a correct file.
+        root = ROOT.as_posix()
         for relative in LANGUAGE_FILES:
             body = _read(relative)
             hrefs = {target for _, target in _links(body)}
+            here = posixpath.dirname(posixpath.join(root, relative))
             with self.subTest(file=relative):
                 for wanted in LANGUAGE_FILES:
-                    expected = os.path.relpath(ROOT / wanted, (ROOT / relative).parent)
-                    self.assertIn(expected, hrefs, f"{relative} 的语言切换缺 {expected}")
+                    expected = posixpath.relpath(posixpath.join(root, wanted), here)
+                    self.assertTrue(expected in hrefs,
+                                    f"{relative} 的语言切换缺 {expected}")
 
     def test_every_relative_link_resolves(self):
         for relative in LANGUAGE_FILES:
