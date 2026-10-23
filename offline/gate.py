@@ -18,6 +18,7 @@ from agent_elapsed.model import lambdas, step_moments, task_moments
 from offline.calibrate import calibration_report, interval_loss, samples_for_task
 from offline.fit_counts import fit_counts
 from offline.fit_step import fit_step_distributions
+from offline.partition import partition_tasks
 
 SEED_BASE = 20261022
 
@@ -61,9 +62,7 @@ def estimate_phi(table: ConstTable, tasks, m: int = MC_PATHS, seed_base: int = S
     between_relative = 0.0
     target = 0.0
     n = 0
-    for task in tasks:
-        if task.censored or task.g_schema_version != table.g_schema_version:
-            continue
+    for task in partition_tasks(tasks, table, complete_only=True).usable:
         lam = lambdas(table, task.g_pred, list(task.g_pred_probs))
         moments_task = task_moments(table, task.g_pred, list(task.g_pred_probs))
         mean = moments_task["expected"]
@@ -162,11 +161,12 @@ def evaluate(online: ConstTable, candidate: ConstTable, holdout_tasks,
     配对差的标准误一并输出，好让拒绝/接受的理由带着不确定度，而不是
     把一次蒙特卡洛抖动当成模型进步。
     """
-    holdout_tasks = [t for t in holdout_tasks if not t.censored
-                     and t.g_schema_version == candidate.g_schema_version]
+    partition = partition_tasks(holdout_tasks, candidate, complete_only=True)
+    holdout_tasks = partition.usable
     n = len(holdout_tasks)
     if n < 20 or not gate_eligible(candidate.task_count + n, candidate.task_count):
-        return GateResult(False, "insufficient-tasks", {"n_holdout": n})
+        return GateResult(False, "insufficient-tasks",
+                          {"n_holdout": n, "unusable_holdout": partition.summary()})
     report = calibration_report(candidate, holdout_tasks, m=2000, seed_base=SEED_BASE)
     seeds = [SEED_BASE + i for i in range(n)]
     differences, cand_pin, onl_pin = [], [], []
@@ -185,6 +185,7 @@ def evaluate(online: ConstTable, candidate: ConstTable, holdout_tasks,
     z = diff_mean / diff_se if diff_se > 0 else 0.0
     details = {"n_holdout": n, "candidate_pinball": cand_mean, "online_pinball": onl_mean,
                "paired_diff": diff_mean, "paired_diff_se": diff_se, "paired_z": z,
+               "unusable_holdout": partition.summary(),
                "per_task_seeds": seeds, "calibration_pass": report["pass"], "report": report}
     if not report["pass"]:
         return GateResult(False, "calibration-failed", details)

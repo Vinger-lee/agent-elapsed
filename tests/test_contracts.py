@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from agent_elapsed.constants import OPS, dump_tables, load_tables, prior_table
+from agent_elapsed.constants import LOCATION_PRIOR_N, PRIOR_EQUIV_N, OPS, dump_tables, load_tables, prior_table
 from agent_elapsed.schema import parse_step_row, parse_task_row
 from agent_elapsed.store import TelemetryStore
 from offline.cli import run_refit
@@ -127,7 +127,10 @@ class ConstantsContractTest(unittest.TestCase):
             path=Path(tmp)/'constants.json'
             dump_tables({'default':prior_table()},path)
             doc=json.loads(path.read_text())
-            self.assertEqual(doc['prior_equiv_n'],20)
+            # 常数表要自证先验强度：尺度 2 / 位置 1（见 constants.py 的注释）。
+            self.assertEqual(doc['prior_equiv_n'], PRIOR_EQUIV_N)
+            self.assertEqual(doc['prior_equiv_n'], 2.0)
+            self.assertEqual(LOCATION_PRIOR_N, 1.0)
 
     def test_malformed_coefficient_width_is_rejected_on_load(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -24,7 +24,13 @@ PHI_MAX = 25.0
 
 PRIOR_MEDIAN_SECONDS = {"llm": 4.0, "tool": 1.5, "build": 90.0, "net": 3.0}
 PRIOR_SIGMA = 0.8
-PRIOR_EQUIV_N = 20
+# 先验的"等效观测数"。冷启动的这两个数字都只是猜测，权重必须小到让数据说话：
+# * 位置（中位数）：1 个伪观测。给 20 个意味着 285 个真实观测之后中位数仍被拉高 33%，
+#   那是系统性偏差，会让覆盖率冲到 1.0、验收门永远拒绝。
+# * 尺度（log 标准差）：2 个伪观测。给 20 个时，步长本来很紧（例如 σ=0.02）的宿主需要
+#   三万步以上才把 σ̂ 从 0.2 压下来，期间区间一直过宽、门也一直拒绝。
+LOCATION_PRIOR_N = 1.0
+PRIOR_EQUIV_N = 2.0
 PRIOR_LAMBDA0 = {"llm": 8.0, "tool": 12.0, "build": 1.5, "net": 2.0}
 
 
@@ -154,8 +160,24 @@ def dump_tables(tables: dict[str, ConstTable], path: Path, backup: bool = True) 
     os.replace(tmp, path)
 
 
+def bundled_prior_tables() -> dict[str, ConstTable]:
+    """The cold-start table shipped inside the package.
+
+    `pip install agent-elapsed` 之后仓库根的 constants.json 并不存在，宿主需要一个
+    不依赖检出目录的起点；`offline.cli init` 就是把它写到用户自己的路径上。
+    """
+    from importlib import resources
+
+    text = resources.files("agent_elapsed").joinpath(
+        "data/constants.json").read_text(encoding="utf-8")
+    return _tables_from_doc(json.loads(text))
+
+
 def load_tables(path) -> dict[str, ConstTable]:
-    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    return _tables_from_doc(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+def _tables_from_doc(doc: dict) -> dict[str, ConstTable]:
     version = int(doc["g_schema_version"])
     if version != G_SCHEMA_VERSION:
         raise SchemaMismatch(

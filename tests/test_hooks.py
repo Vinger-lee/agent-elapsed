@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agent_elapsed.constants import prior_table
 from agent_elapsed.estimate import EstResult
+from agent_elapsed.presentation import format_expectation
 from agent_elapsed.hooks import DisplayPolicy, ElapsedHooks
 
 
@@ -155,7 +156,7 @@ class BackgroundEstimateTest(unittest.TestCase):
         hooks = self.hooks(prediction())
         hooks.on_task_start("a", "任务", g=G).result(timeout=3)
         task = hooks.snapshot().to_dict()["tasks"][0]
-        self.assertEqual(task["band"], "大约 2–3 分钟")
+        self.assertEqual(task["band"], format_expectation(120, 180))
         self.assertEqual(task["estimate"]["seed"], 7)
         self.assertFalse(task["over_estimate"])
         self.clock.advance(181)

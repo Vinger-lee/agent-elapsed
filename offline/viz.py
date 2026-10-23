@@ -3,12 +3,21 @@ from __future__ import annotations
 
 import json
 import re
+from importlib import resources
 from pathlib import Path
 
 from agent_elapsed.constants import ConstTable, OPS
-from agent_elapsed.presentation import format_band
+from agent_elapsed.presentation import format_band, format_expectation
 
-TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "report.html"
+# 模板随包分发：`pip install` 之后 `Path(__file__).parents[1]` 落在 site-packages，
+# 原来的仓库相对路径会直接指向一个不存在的文件，report 命令必崩。
+TEMPLATE_PACKAGE = "offline"
+TEMPLATE_NAME = "templates/report.html"
+
+
+def template_text() -> str:
+    """The report template as shipped inside the package."""
+    return resources.files(TEMPLATE_PACKAGE).joinpath(TEMPLATE_NAME).read_text(encoding="utf-8")
 BANNED_PHRASES = ("将用时", "预计完成时间")
 OP_LABELS = {"llm": "LLM 回合", "tool": "工具调用", "build": "构建/测试", "net": "网络"}
 
@@ -44,7 +53,7 @@ def _track(p50: float, p90: float, actual: float | None) -> dict:
 def build_payload(est: dict, table: ConstTable, actual: float | None = None,
                   report: dict | None = None, drift: bool = False) -> dict:
     p50, p90 = float(est["p50"]), float(est["p90"])
-    band = format_band(p50, p90)
+    band = format_expectation(p50, p90)
     review = None
     if actual is not None:
         review = {"actual_seconds": round(float(actual)),
@@ -108,7 +117,7 @@ def render_report(table: ConstTable, out: Path, est: dict | None = None,
         sample_g = {name: levels[0] for name, levels in FEATURE_LEVELS.items()}
         est = estimate_task(sample_g, [], table=table).to_dict()
     payload = build_payload(est, table, actual=actual, report=report, drift=drift)
-    html = inject(payload, TEMPLATE_PATH.read_text(encoding="utf-8"))
+    html = inject(payload, template_text())
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

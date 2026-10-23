@@ -21,6 +21,11 @@ from agent_elapsed.features import encode_top2
 
 # 正态 95% 双侧分位数：分位数区间的秩估计用它换算成标准误。
 QUANTILE_CI_Z = 1.959963984540054
+# 一次预估至少要两条路径，否则"分位数区间"退化成一个点，任何统计量都无从谈起。
+MIN_PATHS = 2
+# 单次预估最多展开的步数。上限不是性能调优，而是安全阀：λ 一旦被拟合成天文数字，
+# 采样会去分配上百 GB 的数组并把宿主进程 OOM 掉——宁可抛一个可读的错误让宿主降级。
+MAX_EVENTS = 20_000_000
 
 
 def _rates(table: ConstTable, vec) -> dict[str, float]:
@@ -119,7 +124,7 @@ def quantile_interval(samples: np.ndarray, tau: float,
     zero where a kernel/SE formula would be wrong.
     """
     if samples.size == 0:
-        return (float("nan"), float("nan"))
+        raise ValueError("样本为空，无法给出分位数区间")
     if not 0.0 < tau < 1.0:
         raise ValueError("tau 必须在 (0,1) 内")
     ordered = np.sort(samples)
@@ -134,16 +139,41 @@ def quantile_interval(samples: np.ndarray, tau: float,
 def quantile_se(samples: np.ndarray, tau: float, z: float = QUANTILE_CI_Z) -> float:
     """Monte Carlo standard error implied by the rank interval."""
     lo, hi = quantile_interval(samples, tau, z)
-    if not (math.isfinite(lo) and math.isfinite(hi)):
-        return float("nan")
     return (hi - lo) / (2.0 * z)
 
 
+def _check_paths(m: int) -> int:
+    if isinstance(m, bool) or not isinstance(m, int) or m < MIN_PATHS:
+        raise ValueError(f"m 必须是 ≥{MIN_PATHS} 的整数路径数，收到 {m!r}")
+    return m
+
+
+def _expected_events(lam, m: int) -> float:
+    """How many step samples this draw would materialise, before allocating anything."""
+    total = 0.0
+    for op in OPS:
+        value = lam[op]
+        if isinstance(value, np.ndarray):
+            total += float(np.sum(value))          # 每路径一个率时，和已经是总数
+        else:
+            total += float(value) * m
+    return total
+
+
 def sample_totals(table: ConstTable, lam: dict[str, float], m: int, seed: int) -> np.ndarray:
-    return _sample_totals(table, lam, m, np.random.default_rng(seed))
+    return _sample_totals(table, lam, _check_paths(m), np.random.default_rng(seed))
 
 
 def _sample_totals(table: ConstTable, lam, m: int, rng) -> np.ndarray:
+    events = _expected_events(lam, m)
+    if not math.isfinite(events) or events > MAX_EVENTS:
+        per_path = math.fsum(float(np.sum(lam[op])) if isinstance(lam[op], np.ndarray)
+                             else float(lam[op]) for op in OPS)
+        raise ValueError(
+            f"这次预估需要展开约 {events:,.0f} 步，超过单次上限 {MAX_EVENTS:,}"
+            f"（当前每路径期望 {per_path:,.1f} 步 × {m} 条路径）。"
+            "通常是常数表的计数参数 λ 被拟合成异常值，或 m 过大；"
+            "请检查常数表与分类概率，而不是把宿主进程拖进 OOM。")
     total = np.zeros(m)
     for op in OPS:                      # OPS 顺序固定，采样消耗顺序才可复现
         counts = rng.poisson(lam[op], size=m)
@@ -157,6 +187,7 @@ def _sample_totals(table: ConstTable, lam, m: int, rng) -> np.ndarray:
 
 
 def sample_task(table: ConstTable, g: dict, probs, m: int, seed: int) -> np.ndarray:
+    _check_paths(m)
     components = _components(table, g, probs)
     if len(components) == 1:
         return sample_totals(table, components[0][0], m, seed)
@@ -168,6 +199,7 @@ def sample_task(table: ConstTable, g: dict, probs, m: int, seed: int) -> np.ndar
 
 
 def predict(table: ConstTable, g: dict, probs, m: int = 5000, seed: int = 20261022) -> dict:
+    _check_paths(m)
     probs = list(probs or [])
     lam = lambdas(table, g, probs)
     moments = _moments(table)

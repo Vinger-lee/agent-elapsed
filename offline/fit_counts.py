@@ -8,6 +8,7 @@ import numpy as np
 
 from agent_elapsed.constants import ETA_CLIP, OPS, PRIOR_LAMBDA0
 from agent_elapsed.features import G_SCHEMA_VERSION, N_FEATURES, encode
+from offline.partition import partition_tasks
 
 
 def design_rows(g_pred_list) -> np.ndarray:
@@ -113,16 +114,17 @@ def fit_counts(steps, tasks, ridge: float = 1.0, weights=None):
     fallback = {op: (math.log(PRIOR_LAMBDA0[op]),
                      tuple(0.0 for _ in range(N_FEATURES))) for op in OPS}
     counts = task_op_counts(steps)
-    usable = [t for t in tasks
-              if not t.censored and t.g_schema_version == G_SCHEMA_VERSION]
+    usable = [t for t in partition_tasks(tasks, complete_only=True).usable
+              if t.g_schema_version == G_SCHEMA_VERSION]
     if not usable:
         return fallback
     X = design_rows([t.g_pred for t in usable])   # 只用 g_pred；读 g_final 即泄漏
-    wts = None
     if weights is not None:
         all_ids = [t.task_id for t in tasks]
         by_id = {tid: i for i, tid in enumerate(all_ids)}
         wts = np.array([float(weights[by_id[t.task_id]]) for t in usable])
+    else:
+        wts = None
     out = {}
     for op in OPS:
         y = np.array([float(counts.get(t.task_id, {}).get(op, 0)) for t in usable])

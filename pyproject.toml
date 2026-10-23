@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-elapsed"
-version = "1.1.0"
-description = "Elapsed-time estimation widget for long-running agent tasks: compound Poisson x lognormal, closed-form moments, Monte Carlo quantiles."
+version = "1.2.0"
+description = "Elapsed-time estimation widget for long-running agent tasks: compound Poisson x lognormal, closed-form moments, Monte Carlo quantiles, calibration gate."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -18,8 +18,26 @@ classifiers = [
 ]
 dependencies = ["numpy>=2.0"]
 
+[project.optional-dependencies]
+dev = ["coverage>=7"]
+
+[project.scripts]
+agent-elapsed-bridge = "agent_elapsed.bridge:console"
+agent-elapsed-offline = "offline.cli:console"
+
+[project.urls]
+Homepage = "https://github.com/Vinger-lee/agent-elapsed"
+Issues = "https://github.com/Vinger-lee/agent-elapsed/issues"
+Changelog = "https://github.com/Vinger-lee/agent-elapsed/blob/main/CHANGELOG.md"
+
 [tool.setuptools]
 packages = ["agent_elapsed", "offline"]
+
+[tool.setuptools.package-data]
+# 这两个文件必须随包走：一个是报告模板，一个是冷启动先验。
+# 少了它们，`pip install` 之后的 `report` 与 `init` 都会指向不存在的路径。
+agent_elapsed = ["data/*.json"]
+offline = ["templates/*.html"]
 
 [tool.unittest]
 # 测试用标准库 unittest：运行时只需要 numpy，不为一个测试框架增加依赖。

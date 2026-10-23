@@ -5,8 +5,47 @@ from pathlib import Path
 
 from agent_elapsed.constants import dump_tables, load_tables, prior_table
 from agent_elapsed.store import TelemetryStore
-from offline.cli import main, run_refit
+from offline.cli import main, run_init, run_refit, run_synth
 from offline.synth import generate_tasks
+
+
+class OnboardingCommandTest(unittest.TestCase):
+    """装完就能跑通：init 写先验，synth 造数据，随后 refit/report 才有的可跑。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_init_writes_the_bundled_prior_and_refuses_to_clobber(self):
+        target = self.root / "constants.json"
+        self.assertEqual(run_init(target), 0)
+        self.assertEqual(load_tables(target)["default"], prior_table())
+        self.assertEqual(run_init(target), 1, "已存在时不应该默默覆盖")
+        self.assertEqual(run_init(target, force=True), 0)
+
+    def test_synth_then_refit_then_report_is_a_complete_pipeline(self):
+        data, constants = self.root / "data", self.root / "constants.json"
+        self.assertEqual(run_synth(data, tasks=400, seed=61), 0)
+        self.assertEqual(len(TelemetryStore(data / "events.jsonl", data / "tasks.jsonl",
+                                           data / "rejects.jsonl").read_tasks()), 400)
+        self.assertEqual(main(["init", "--constants", str(constants)]), 0)
+        code = main(["refit", "--store", str(data), "--constants", str(constants),
+                     "--env", "m-a|h-a"])
+        self.assertIn(code, (0, 1), "合成数据必须至少走到验收门，而不是数据不足")
+        out = self.root / "report.html"
+        self.assertEqual(main(["report", "--constants", str(constants), "--env", "m-a|h-a",
+                               "--store", str(data), "--out", str(out)]), 0)
+        html = out.read_text(encoding="utf-8")
+        self.assertIn("const DATA = {", html)
+        self.assertIn("fit-", html, "报告应引用拟合表的 fit_id")
+        self.assertNotIn("http://", html, "报告必须自包含，不许引用外部资源")
+        self.assertGreater(out.stat().st_size, 1000)
+
+    def test_synth_rejects_a_nonsense_task_count(self):
+        self.assertEqual(run_synth(self.root / "x", tasks=0, seed=1), 2)
 
 
 class RefitCommandTest(unittest.TestCase):

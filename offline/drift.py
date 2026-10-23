@@ -7,11 +7,17 @@ import numpy as np
 
 from offline.calibrate import interval_loss
 from offline.gate import samples_for_task
+from offline.partition import partition_tasks
 
 
 def per_task_pinball(table, tasks, m: int = 2000, seed_base: int = 7) -> list[float]:
+    """Scores of the tasks the model can read; unreadable rows are dropped, not scored as zero.
+
+    Censored tasks are kept: this is a monitoring series, and the caller decides its scope
+    (`refit`/`report` already pass complete tasks only).
+    """
     out = []
-    for i, task in enumerate(tasks):
+    for i, task in enumerate(partition_tasks(tasks, table).usable):
         s = samples_for_task(table, task, m=m, seed=seed_base + i)
         out.append(interval_loss(float(task.total_wall), s))
     return out

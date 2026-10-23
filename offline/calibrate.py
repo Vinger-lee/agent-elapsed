@@ -7,6 +7,7 @@ import numpy as np
 
 from agent_elapsed.constants import MC_PATHS, OPS, ConstTable
 from agent_elapsed.model import sample_task
+from offline.partition import partition_tasks
 
 TAUS = (0.5, 0.8, 0.9)
 
@@ -76,11 +77,13 @@ def interval_loss(y: float, samples: np.ndarray,
 
 def calibration_report(table: ConstTable, tasks, m: int = MC_PATHS,
                        seed_base: int = 7) -> dict:
-    tasks = [t for t in tasks if not t.censored
-             and t.g_schema_version == table.g_schema_version]
+    partition = partition_tasks(tasks, table, complete_only=True)
+    tasks = partition.usable
+    unusable = partition.summary()
     n = len(tasks)
     if n == 0:
-        return {"n": 0, "taus": {}, "ks": {"d": 1.0, "p": 0.0, "pass": False},
+        return {"n": 0, "unusable": unusable, "taus": {},
+                "ks": {"d": 1.0, "p": 0.0, "pass": False},
                 "pinball": {"p50": float("inf"), "p90": float("inf"), "mean": float("inf")},
                 "pass": False}
     actuals = np.array([t.total_wall for t in tasks])
@@ -110,7 +113,7 @@ def calibration_report(table: ConstTable, tasks, m: int = MC_PATHS,
     p = ks_pvalue_uniform(d, n)
     ks = {"d": d, "p": p, "pass": p > 0.05}
     pin_mean = float(np.mean(pins["p50"] + pins["p90"]))
-    return {"n": n, "taus": taus_out, "ks": ks,
+    return {"n": n, "unusable": unusable, "taus": taus_out, "ks": ks,
             "pinball": {"p50": float(np.mean(pins["p50"])),
                         "p90": float(np.mean(pins["p90"])), "mean": pin_mean},
             "pass": bool(ok and ks["pass"])}

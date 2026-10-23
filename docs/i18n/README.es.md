@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237 tests">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="Runtime: numpy only">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Model">
   <br>
@@ -178,6 +178,52 @@ Protocolo, hilos y errores: [docs/integration.md](../../docs/integration.md).
 
 ---
 
+## Registrar la telemetría (el bucle que hace real la autocorrección)
+
+Nada de lo anterior aprende si las duraciones reales no llegan al almacén. `ElapsedHooks` solo dibuja
+el widget; `TelemetryStore` solo añade filas validadas. `TelemetryRecorder` es el adaptador que une
+uno y otro, y es la diferencia entre "una estimación bonita" y "una estimación que mejora":
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "arreglar la interfaz y ejecutar las pruebas", g=g,
+                   probs=[("patch", .7), ("debug", .3)], long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # una ida y vuelta al LLM
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # un paso fallido también registra su duración
+    recorder.finish("t-1")        # cancelar con cancel(), fallar con fail()
+```
+
+Decisiones del adaptador, cada una con su motivo:
+
+* **Los pasos se escriben al instante**, no al cerrar la tarea. Si el host se cae o se cancela, los
+  pasos ya ocurridos son observaciones completas — justo lo que necesita el manejo de censura.
+* **`cancel()` marca la tarea como censurada**: el tiempo de pared de una tarea cancelada es solo una
+  cota inferior, así que no puede entrar en conteos, cobertura ni aceptación. Sus pasos sí informan
+  las duraciones de paso.
+* **`fail()` es una observación completa**: la tarea terminó de verdad y gastó ese tiempo de verdad.
+* **Una tarea sin características se registra igual** (`g_pred` = `{}`). Perder una duración real
+  porque el clasificador aún no había corrido sesgaría la muestra; en su lugar
+  `offline.partition.partition_tasks` pone la fila en cuarentena y la cuenta, así el salto se ve en
+  lugar de ser silencioso.
+
+Prueba el bucle completo sin ningún host:
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # graba + intenta un refit
+```
+
+---
+
 ## Comandos offline
 
 ```bash
@@ -221,7 +267,7 @@ Reglas que el código impone:
 ## Verificación
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237 pruebas
+python3 -B -m unittest discover -s tests -t .     # 267 pruebas
 ```
 
 Extremo a extremo (400 tareas, semilla 61, `m-a|h-a`, 15 047 eventos, 351 completas, 32 holdout):

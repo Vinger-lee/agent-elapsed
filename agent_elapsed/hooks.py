@@ -11,7 +11,7 @@ from typing import Callable
 
 from agent_elapsed.constants import ConstTable
 from agent_elapsed.estimate import EstResult, estimate_task
-from agent_elapsed.presentation import format_band, format_elapsed
+from agent_elapsed.presentation import format_elapsed, format_expectation
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,9 @@ class TaskView:
             "task_id": self.task_id, "title": self.title, "status": "running",
             "elapsed_seconds": self.elapsed_seconds,
             "elapsed_label": format_elapsed(self.elapsed_seconds),
-            "band": (format_band(self.estimate.p50, self.estimate.p90)
+            # 键名保持 band（宿主协议不轻改），内容是"中位数 + 九成上界"，
+            # 不是把 40% 概率的 P50–P90 区间说成"大约落在这里"。
+            "band": (format_expectation(self.estimate.p50, self.estimate.p90)
                      if calibrated else None),
             "calibrating": self.estimate.calibrating if self.estimate else None,
             "over_estimate": bool(calibrated and self.elapsed_seconds > self.estimate.p90),

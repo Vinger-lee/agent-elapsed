@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237 项测试">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 项测试">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="运行时仅 numpy">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="模型">
   <br>
@@ -42,6 +42,7 @@
 - [分位数与它的不确定度](#分位数与它的不确定度)
 - [校准与验收门](#校准与验收门)
 - [嵌入宿主](#嵌入宿主)
+- [记录遥测](#记录遥测让越用越准真正成立的那一段)
 - [离线命令](#离线命令)
 - [遥测契约](#遥测契约)
 - [仓库结构](#仓库结构)
@@ -75,7 +76,17 @@
 
 ```bash
 python3 -c "import numpy; print(numpy.__version__)"   # 需要 ≥2.0
-python3 -m unittest discover -s tests -t . -v          # 237 项
+python3 -m unittest discover -s tests -t . -v          # 267 项
+```
+
+或者装成包直接用脚本：
+
+```bash
+pip install agent-elapsed
+agent-elapsed-offline init --constants constants.json      # 写出随包分发的冷启动先验
+agent-elapsed-offline synth --out data --tasks 400         # 生成带真值的合成遥测
+agent-elapsed-offline refit --store data --constants constants.json --env 'm-a|h-a'
+agent-elapsed-bridge --constants constants.json --env default   # 给其他语言的常驻桥
 ```
 
 在终端里看完整宿主生命周期：
@@ -279,6 +290,49 @@ interval = ( S_(k−h) , S_(k+h) )        # 次序统计量，截断到 0..m−1
 
 ---
 
+## 记录遥测（让"越用越准"真正成立的那一段）
+
+上面所有内容都不会自己变准，除非真实耗时真的落进库里。`ElapsedHooks` 只负责画组件，
+`TelemetryStore` 只负责追加校验过的行，`TelemetryRecorder` 是把前者翻译成后者的适配器——
+它决定了这套东西到底是"一个不错的预估"还是"一个会变准的预估"：
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # 一次 LLM 往返
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # 失败步骤照样记时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
+```
+
+适配器里每个取舍都有原因：
+
+* **步事件立刻落盘**，不等任务结束。宿主崩了或被用户取消时，已经发生的步骤就是完整观测，
+  正是删失处理需要的那批数据。
+* **`cancel()` 记删失**：取消任务的总时长只是下界，不能进计数、覆盖率或验收；它的步长仍然有效。
+* **`fail()` 是完整观测**：任务确实结束了，也确实花掉了那些时间。
+* **没有分类也要落盘**（`g_pred` 为空字典）。因为分类还没跑就丢掉真实耗时会让样本有偏；
+  改成让 `offline.partition.partition_tasks` 隔离并计数，跳过这件事就看得见而不是静默发生。
+
+不用宿主也能把整条链路跑一遍：
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
+```
+
+
+---
+
 ## 离线命令
 
 ```bash
@@ -326,28 +380,32 @@ HTML 数据内联，不从网络加载任何东西。
 ```
 agent-elapsed/
 ├── constants.json               # 冷启动先验表（按环境分组）
-├── agent_elapsed/               # 运行时：无 I/O、不拟合、不联网
+├── agent_elapsed/               # 运行时：不拟合、不联网（只写遥测）
 │   ├── model.py                 #   复合泊松 × 对数正态、矩、采样、分位数
 │   ├── features.py              #   g 的 21 列 one-hot 编码，top-2 类别混合
-│   ├── constants.py             #   表结构、环境选择、φ 的唯一入口
+│   ├── constants.py             #   表结构、环境选择、φ 的唯一入口、随包先验
 │   ├── estimate.py              #   运行时唯一入口（EstResult）
 │   ├── hooks.py                 #   任务生命周期、展示策略、后台预估
-│   ├── presentation.py          #   "6–14 分钟"文案的唯一实现
+│   ├── telemetry.py             #   hooks → store：任务记录与步事件
+│   ├── presentation.py          #   "通常 6 分钟 · 九成在 14 分钟内"的唯一实现
 │   ├── tui.py                   #   TUI 文本块渲染
 │   ├── bridge.py                #   常驻 stdio JSON 协议
-│   └── schema.py, store.py      #   遥测契约、追加写存储
+│   ├── data/constants.json      #   随包分发的冷启动先验（装完就不需要检出目录）
+│   └── schema.py, store.py      #   校验过的遥测契约、追加写存储
 ├── offline/                     # 拟合、校准、验收门、漂移、合成数据、报告
 │   ├── fit_counts.py            #   加权 ridge 泊松回归（IRLS / Newton）
 │   ├── fit_step.py              #   对数步长的 Normal-Inverse-Gamma 后验
 │   ├── calibrate.py             #   随机化 PIT、覆盖率、KS、pinball
 │   ├── gate.py                  #   离散度求解、配对验收、原子替换、回滚
 │   ├── drift.py                 #   EWMA 漂移检测、折扣权重
+│   ├── partition.py             #   模型读不了的记录：隔离并计数，不静默丢
 │   ├── synth.py                 #   隐藏真值生成器（唯一有标准答案的地方）
-│   └── viz.py, cli.py           #   离线 HTML 报告、显式命令面
+│   ├── templates/report.html    #   内联数据报告模板（作为包数据分发）
+│   └── viz.py, cli.py           #   离线 HTML 报告、init/synth/refit/report/rollback
 ├── examples/tui_host.py         # 终端里的完整宿主生命周期
-├── templates/report.html        # 内联数据报告模板
+├── examples/record_telemetry.py # 整条闭环：hooks → store → refit → report
 ├── docs/                        # 见下方文档表
-└── tests/                       # 237 项测试，仅标准库 unittest
+└── tests/                       # 267 项测试，仅标准库 unittest
 ```
 
 ---
@@ -355,7 +413,7 @@ agent-elapsed/
 ## 验证
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237 项
+python3 -B -m unittest discover -s tests -t .     # 267 项
 ```
 
 合成遥测端到端（400 任务、seed 61、环境 `m-a|h-a`、15047 条步事件、351 个完整任务、32 个留出任务）：

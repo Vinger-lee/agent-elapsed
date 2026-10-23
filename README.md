@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237 tests">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="Runtime: numpy only">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Model">
   <br>
@@ -47,6 +47,7 @@ line-oriented JSON bridge. No web page, no HTTP server, no separate window. At r
 - [Quantiles and their uncertainty](#quantiles-and-their-uncertainty)
 - [Calibration and the acceptance gate](#calibration-and-the-acceptance-gate)
 - [Embedding it in a host](#embedding-it-in-a-host)
+- [Recording telemetry](#recording-telemetry-the-loop-that-makes-it-self-correcting)
 - [Offline commands](#offline-commands)
 - [Telemetry contract](#telemetry-contract)
 - [Repository layout](#repository-layout)
@@ -85,7 +86,17 @@ Requirements: Python ≥3.11 and numpy ≥2.0. The test suite uses only the stan
 
 ```bash
 python3 -c "import numpy; print(numpy.__version__)"   # needs >= 2.0
-python3 -m unittest discover -s tests -t . -v          # 237 tests
+python3 -m unittest discover -s tests -t . -v          # 267 tests
+```
+
+Or install it and use the scripts:
+
+```bash
+pip install agent-elapsed
+agent-elapsed-offline init --constants constants.json      # bundled cold-start prior
+agent-elapsed-offline synth --out data --tasks 400        # synthetic telemetry with ground truth
+agent-elapsed-offline refit --store data --constants constants.json --env 'm-a|h-a'
+agent-elapsed-bridge --constants constants.json --env default   # stdio bridge for other languages
 ```
 
 Watch the full host lifecycle in a terminal:
@@ -309,6 +320,52 @@ Full protocol, thread boundaries and error handling: [docs/integration.md](docs/
 
 ---
 
+## Recording telemetry (the loop that makes it self-correcting)
+
+Nothing above ever learns unless real durations land in the store. `ElapsedHooks` only draws the
+widget; `TelemetryStore` only appends validated rows. `TelemetryRecorder` is the adapter that turns
+one into the other, and it is the difference between "a nice estimate" and "an estimate that gets
+better":
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # 一次 LLM 往返
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # 失败步骤照样记录时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
+```
+
+Decisions baked into the adapter, each for a reason:
+
+* **Steps are written immediately**, not at task end. If the host crashes or the user cancels, the
+  steps that already happened are complete observations — exactly the data censoring handling needs.
+* **`cancel()` marks the task censored**: a cancelled task's wall time is only a lower bound, so it
+  must not enter counts, coverage or acceptance. Its steps still inform step lengths.
+* **`fail()` is a complete observation**: the task really ended and really spent that time.
+* **A task with no features is still recorded** (`g_pred` = `{}`). Losing a real duration because the
+  classifier had not run yet would bias the sample; instead `offline.partition.partition_tasks`
+  quarantines the row and counts it, so the skip is visible rather than silent.
+
+Try the whole loop with no host at all:
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
+```
+
+
+---
+
 ## Offline commands
 
 ```bash
@@ -361,28 +418,32 @@ Rules the code enforces rather than documents:
 ```
 agent-elapsed/
 ├── constants.json               # cold-start prior table (per environment)
-├── agent_elapsed/               # runtime: no I/O, no fitting, no network
+├── agent_elapsed/               # runtime: no fitting, no network (telemetry writes only)
 │   ├── model.py                 #   compound Poisson × lognormal, moments, sampler, quantiles
 │   ├── features.py              #   21-column one-hot encoding of g, top-2 class mixing
-│   ├── constants.py             #   table shape, env selection, the φ entry point
+│   ├── constants.py             #   table shape, env selection, the φ entry point, bundled prior
 │   ├── estimate.py              #   the single runtime entry point (EstResult)
 │   ├── hooks.py                 #   task lifecycle, display policy, background estimate
-│   ├── presentation.py          #   the shared "6–14 min" text
+│   ├── telemetry.py             #   hooks → store: task records and step events
+│   ├── presentation.py          #   the shared "通常 6 分钟 · 九成在 14 分钟内" text
 │   ├── tui.py                   #   TUI text block renderer
 │   ├── bridge.py                #   resident stdio JSON protocol
-│   └── schema.py, store.py      #   telemetry contract, append-only store
+│   ├── data/constants.json      #   the bundled cold-start prior (so pip install needs no checkout)
+│   └── schema.py, store.py      #   validated telemetry contract, append-only store
 ├── offline/                     # fitting, calibration, gate, drift, synthetic data, report
 │   ├── fit_counts.py            #   weighted ridge Poisson regression (IRLS/Newton)
 │   ├── fit_step.py              #   log-step Normal-Inverse-Gamma posterior
 │   ├── calibrate.py             #   randomized PIT, coverage, KS, pinball
 │   ├── gate.py                  #   dispersion solve, paired acceptance, atomic swap, rollback
 │   ├── drift.py                 #   EWMA drift detector, discount weights
+│   ├── partition.py             #   quarantine for rows the model cannot read (counted, not dropped)
 │   ├── synth.py                 #   hidden-truth generator (the only place with ground truth)
-│   └── viz.py, cli.py           #   offline HTML report, explicit command surface
+│   ├── templates/report.html    #   inline-data report template (shipped as package data)
+│   └── viz.py, cli.py           #   offline HTML report, init/synth/refit/report/rollback
 ├── examples/tui_host.py         # a complete host lifecycle in a terminal
-├── templates/report.html        # inline-data report template
+├── examples/record_telemetry.py # the whole loop: hooks → store → refit → report
 ├── docs/                        # see the documentation table below
-└── tests/                       # 237 tests, standard-library unittest only
+└── tests/                       # 267 tests, standard-library unittest only
 ```
 
 ---
@@ -390,7 +451,7 @@ agent-elapsed/
 ## Verification
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237 tests
+python3 -B -m unittest discover -s tests -t .     # 267 tests
 ```
 
 End-to-end on synthetic telemetry (400 tasks, seed 61, environment `m-a|h-a`, 15 047 step events, 351

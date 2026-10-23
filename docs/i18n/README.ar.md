@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="النجوم">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="numpy">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="النموذج">
   <br>
@@ -144,6 +144,50 @@ interval = ( S_(k−h) , S_(k+h) )        # order statistics, clipped to 0..m−
 
 ---
 
+## تسجيل القياسات (الحلقة التي تجعل التصحيح الذاتي ممكنًا)
+
+لا شيء مما سبق يتعلّم فعلًا ما لم تصل المدد الحقيقية إلى المخزن. `ElapsedHooks` يرسم الودجة فقط؛
+و`TelemetryStore` يضيف صفوفًا مُتحقَّقًا منها فقط. أما `TelemetryRecorder` فهو المُهايئ الذي يحوّل
+أحدهما إلى الآخر، وهو الفرق بين «تقدير لطيف» و«تقدير يتحسّن»:
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # 一次 LLM 往返
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # 失败步骤照样记录时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
+```
+
+قرارات مثبَّتة في المُهايئ، ولكلٍّ منها سبب:
+
+* **تُكتب الخطوات فورًا**، لا عند نهاية المهمة. إذا انهار المضيف أو ألغى المستخدم، فالخطوات التي
+  حدثت بالفعل مشاهدات كاملة — وهي بالضبط البيانات التي تحتاجها معالجة الرقابة.
+* **`cancel()` يعلّم المهمة كمرقَّبة**: الزمن الفعلي لمهمة ملغاة حدٌّ أدنى فقط، لذا يجب ألا يدخل
+  العدّ ولا التغطية ولا القبول. وخطواتها تظل تفيد أطوال الخطوات.
+* **`fail()` مشاهدة كاملة**: المهمة انتهت فعلًا وأنفقت ذلك الوقت فعلًا.
+* **المهمة التي لا ميزات لها تُسجَّل أيضًا** (`g_pred` = `{}`). إن فقدان مدة حقيقية لأن المصنّف لم
+  يكن قد عمل بعد سيُحيّز العيّنة؛ وبدلًا من ذلك يعزل `offline.partition.partition_tasks` الصف
+  ويعدّه، فيكون التخطّي مرئيًا لا صامتًا.
+
+جرّب الحلقة كاملة دون أي مضيف:
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
+```
+
+---
+
 ## الأوامر دون اتصال
 
 ```bash
@@ -182,7 +226,7 @@ JSONL بالإضافة فقط؛ والمشتقات (`X`, `n_j`) لا تُخزَ�
 ## التحقق
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237 tests
+python3 -B -m unittest discover -s tests -t .     # 267 tests
 ```
 
 من طرف إلى طرف (400 مهمة، بذرة 61، `m-a|h-a`، 15 047 حدثًا، 351 مكتملة، 32 holdout):

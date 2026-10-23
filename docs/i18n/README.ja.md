@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="スター数">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="ライセンス: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237 件のテスト">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 件のテスト">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="実行時は numpy のみ">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="モデル">
   <br>
@@ -163,6 +163,44 @@ m = 5000 では P50 約 ±22 秒(SE ≈ 11 秒)、P90 約 ±89 秒(SE ≈ 46 秒
 
 ---
 
+## テレメトリの記録(自己修正が成立する仕組み)
+
+上の仕組みは、実測の所要時間がストアに残らなければ何も学習しません。`ElapsedHooks` はウィジェットを描くだけで、`TelemetryStore` は検証済みの行を追記するだけです。`TelemetryRecorder` はその 2 つをつなぐアダプタであり、「良い見積もり」と「良くなっていく見積もり」の違いそのものです:
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # 一次 LLM 往返
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # 失败步骤照样记录时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
+```
+
+アダプタに組み込んだ判断と、それぞれの理由:
+
+* **ステップは即座に書き込みます**——タスク終了時ではありません。ホストのクラッシュやユーザーのキャンセルがあっても、既に起きたステップは完全な観測であり、まさに打ち切り(censoring)処理が必要とするデータです。
+* **`cancel()` はタスクを打ち切りとして記録します**: キャンセルされたタスクの実時間は下界にすぎないため、件数・カバレッジ・受け入れに入れてはいけません。ステップはステップ長の推定には寄与します。
+* **`fail()` は完全な観測です**: タスクは実際に終わり、実際にその時間を使っています。
+* **特徴量のないタスクも記録します**(`g_pred` = `{}`)。分類器がまだ走っていないという理由で実測時間を落とすと標本が偏ります。代わりに `offline.partition.partition_tasks` がその行を隔離(quarantine)し件数に入れるので、スキップは黙って消えずに見えます。
+
+ホストなしでループ全体を試せます:
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
+```
+
+---
+
 ## オフラインコマンド
 
 ```bash
@@ -203,7 +241,7 @@ python3 -m offline.cli rollback --constants constants.json
 ## 検証
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237 tests
+python3 -B -m unittest discover -s tests -t .     # 267 tests
 ```
 
 合成テレメトリのエンドツーエンド(400 タスク、seed 61、環境 `m-a|h-a`、15047 ステップイベント、351 完了タスク、32 ホールドアウト):

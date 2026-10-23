@@ -31,7 +31,32 @@ hooks.close()  # 宿主会话退出时释放后台资源并清理组件。
 
 `outcome` 包含 `task_id/status/total_wall/estimate/estimator_wall/estimation_error`。`total_wall` 是从任务开始到终结事件的真实秒数，采用单调时钟；`estimate` 保留开始时得到的估算，不在任务结束时重新猜一次。预估尚未完成或失败时它为 `None`，结束 hook 不等待后台计算；迟到结果被丢弃。
 
-这层不自动写遥测。宿主把 `outcome`、开始时的 `g/probs`、自身 `model_id/host` 等信息映射到现有 `TelemetryStore`；中断而未完成的任务标记为删失，不能当作完整任务拟合计数或验证覆盖率。
+`ElapsedHooks` 本身不写遥测：它只管显示。要把"越用越准"接起来，用 `TelemetryRecorder` 把同一套生命周期翻译成遥测行：
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore
+
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口", g=g, probs=[("patch", .7)], long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        step["ok"] = False            # 失败步骤保留时长
+    recorder.finish("t-1")            # 取消用 cancel()，失败用 fail()
+```
+
+约定：
+
+| 事件 | 记录方式 | 理由 |
+|---|---|---|
+| 正常完成 | `censored=False` | 完整观测 |
+| 用户取消 | `censored=True` | 总时长只是下界；步长仍然有效 |
+| 失败结束 | `censored=False` | 任务确实结束了，也确实花了那些时间 |
+| 还没有分类（`g` 缺失） | 记录照写，`g_pred={}` | 丢掉真实耗时会让样本有偏；由 `offline.partition` 隔离并计数 |
+| 步事件 | 立刻写盘 | 崩溃/取消时已发生的步骤就是完整观测 |
 
 ## 聊天、短任务和长任务
 

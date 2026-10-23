@@ -125,10 +125,10 @@ class DispersionSolveTest(unittest.TestCase):
         tasks = records(generate_tasks(80, seed=63)[1])
         good = [t for t in tasks if not t.censored]
         reference = estimate_phi(table, good)
-        padded = good + [SimpleNamespace(g_pred=G, g_pred_probs=[], censored=True,
-                                         g_schema_version=1, total_wall=1e9),
-                         SimpleNamespace(g_pred=G, g_pred_probs=[], censored=False,
-                                         g_schema_version=99, total_wall=1e9)]
+        padded = good + [SimpleNamespace(task_id="cancelled", g_pred=G, g_pred_probs=[],
+                                         censored=True, g_schema_version=1, total_wall=1e9),
+                         SimpleNamespace(task_id="old-schema", g_pred=G, g_pred_probs=[],
+                                         censored=False, g_schema_version=99, total_wall=1e9)]
         self.assertAlmostEqual(estimate_phi(table, padded), reference, places=12)
 
     def test_empty_input_returns_the_lower_bound(self):

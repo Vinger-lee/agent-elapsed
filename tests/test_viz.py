@@ -4,6 +4,8 @@ import unittest
 from agent_elapsed.constants import StepParams, ConstTable, OPS, prior_table
 from agent_elapsed.estimate import estimate_task
 from agent_elapsed.features import G_SCHEMA_VERSION
+from offline import viz
+from agent_elapsed.presentation import format_expectation
 from offline.viz import badge, build_payload, format_band, inject, render_report
 
 G = {"task_class": "patch", "touched_files": "2-3", "verification_loops": "2",
@@ -17,7 +19,7 @@ def est():
 
 
 class BandFormatTest(unittest.TestCase):
-    """spec §7：永远是一根带，不是一个点。"""
+    """spec §7：永远是一根带，不是一个点；措辞不得把 40% 概率说成"大约落在这里"。"""
 
     def test_minutes_are_integers(self):
         self.assertEqual(format_band(380.0, 840.0), "大约 6–14 分钟")
@@ -34,6 +36,13 @@ class BandFormatTest(unittest.TestCase):
     def test_no_two_decimals_anywhere(self):
         for pair in [(380.123, 840.456), (7.5, 9.25), (1.0, 59.9), (0.4, 0.6)]:
             self.assertNotRegex(format_band(*pair), r"\d\.\d\d")
+
+    def test_expectation_states_median_and_upper_bound_not_a_fake_range(self):
+        text = format_expectation(380.0, 840.0)
+        self.assertIn("6", text)
+        self.assertIn("14", text)
+        self.assertIn("九成", text)
+        self.assertNotIn("–", text, "不要再用连字符把两个分位数说成一个区间")
 
     def test_boundary_60s_switches_unit(self):
         self.assertIn("秒", format_band(10.0, 59.0))
@@ -65,7 +74,7 @@ class PayloadTest(unittest.TestCase):
         payload = build_payload(est(), prior_table())
         self.assertNotIn("samples", payload)
         self.assertIn("band", payload)
-        self.assertEqual(payload["band"], format_band(est()["p50"], est()["p90"]))
+        self.assertEqual(payload["band"], format_expectation(est()["p50"], est()["p90"]))
 
     def test_review_view_only_when_actual_present(self):
         self.assertIsNone(build_payload(est(), prior_table(), actual=None)["review"])
@@ -100,7 +109,7 @@ class RenderTest(unittest.TestCase):
     def test_template_contains_no_arithmetic_operators_on_data(self):
         import pathlib
 
-        text = pathlib.Path("templates/report.html").read_text(encoding="utf-8")
+        text = viz.template_text()
         js = text.split("<script>", 1)[1].split("</script>", 1)[0]   # 只取脚本体
         for token in ("*", "/", "Math.", "parseFloat", ".reduce(", "parseInt"):
             self.assertNotIn(token, js, f"模板里不该有 {token} 这类计算")
@@ -108,7 +117,7 @@ class RenderTest(unittest.TestCase):
     def test_template_is_self_contained(self):
         import pathlib
 
-        text = (pathlib.Path("templates/report.html")).read_text(encoding="utf-8")
+        text = viz.template_text()
         self.assertNotIn("http://", text)
         self.assertNotIn("https://", text)
         for token in ("fetch(", "XMLHttpRequest", "d3.", "chart.js"):

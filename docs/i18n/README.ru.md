@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237 tests">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="numpy only">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Model">
   <br>
@@ -126,6 +126,42 @@ m = 5000: P50 ≈ ±22 с (SE ≈ 11 с), P90 ≈ ±89 с (SE ≈ 46 с).
 * `calibrating`: лишь время;
 * обычный чат не считает.
 
+## Запись телеметрии (цикл, который делает самокоррекцию реальной)
+
+Ничто из описанного выше не учится, пока реальные длительности не попадают в хранилище. `ElapsedHooks` только рисует виджет; `TelemetryStore` только дописывает провалидированные строки. `TelemetryRecorder` — адаптер, превращающий одно в другое, и именно он отличает «красивую оценку» от «оценки, которая становится лучше»:
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # 一次 LLM 往返
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # 失败步骤照样记录时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
+```
+
+Решения, зашитые в адаптер, каждое по своей причине:
+
+* **Шаги пишутся сразу**, а не в конце задачи. Если хост упадёт или пользователь отменит задачу, уже состоявшиеся шаги — полные наблюдения; ровно те данные, которые нужны для учёта цензурирования.
+* **`cancel()` помечает задачу цензурированной**: wall time отменённой задачи — только нижняя граница, поэтому он не должен попадать в счётчики, покрытие или приёмку. Её шаги по-прежнему уточняют длины шагов.
+* **`fail()` — полное наблюдение**: задача действительно завершилась и действительно потратила это время.
+* **Задача без признаков всё равно записывается** (`g_pred` = `{}`). Потерять реальную длительность из-за того, что классификатор ещё не отработал, означало бы сместить выборку; вместо этого `offline.partition.partition_tasks` отправляет строку в карантин и учитывает её, так что пропуск виден, а не молчалив.
+
+Прогнать весь цикл вообще без хоста:
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
+```
+
 ## Оффлайн-команды
 
 ```bash
@@ -158,7 +194,7 @@ JSONL, только добавление строк.
 ## Проверка
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237 tests
+python3 -B -m unittest discover -s tests -t .     # 267 tests
 ```
 
 Синтетика: 400 задач, seed 61, `m-a|h-a`, 15 047 шагов, 351 полная, 32 отложки.

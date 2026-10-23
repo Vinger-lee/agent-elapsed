@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237개 테스트 통과">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267개 테스트 통과">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="런타임: numpy만">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="모델">
   <br>
@@ -181,6 +181,50 @@ m = 5000에서 P50은 약 ±22초(SE ≈ 11초), P90은 약 ±89초(SE ≈ 46초
 
 ---
 
+## 텔레메트리 기록(자기 보정이 성립하는 구간)
+
+실제 소요 시간이 저장소에 쌓이지 않으면 위의 어떤 것도 학습하지 않습니다. `ElapsedHooks`는 위젯만 그리고,
+`TelemetryStore`는 검증을 통과한 행만 덧붙입니다. `TelemetryRecorder`는 이 둘을 이어 붙이는 어댑터이며,
+"그럴듯한 추정"과 "점점 나아지는 추정"을 가르는 것이 바로 이 어댑터입니다:
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # 一次 LLM 往返
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # 失败步骤照样记录时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
+```
+
+어댑터에 박아 둔 설계상의 선택들, 각각에는 이유가 있습니다:
+
+* **스텝은 작업이 끝날 때가 아니라 즉시 기록됩니다.** 호스트가 죽거나 사용자가 취소해도 이미 일어난 스텝은
+  완전한 관측이며, 바로 이것이 중도절단(censoring) 처리에 필요한 데이터입니다.
+* **`cancel()`은 그 작업을 중도절단으로 표시합니다.** 취소된 작업의 실측 시간은 하한일 뿐이므로 횟수,
+  커버리지, 수용 판정에 들어가면 안 됩니다. 다만 그 스텝들은 스텝 길이 통계에는 여전히 기여합니다.
+* **`fail()`은 완전한 관측입니다.** 작업은 실제로 끝났고 그 시간을 실제로 썼기 때문입니다.
+* **특징이 없는 작업도 그대로 기록됩니다**(`g_pred` = `{}`). 분류기가 아직 돌지 않았다는 이유로 실제 소요
+  시간을 버리면 표본이 편향되므로, 대신 `offline.partition.partition_tasks`가 그 행을 격리해 계수합니다 —
+  건너뛴 사실이 조용히 묻히지 않고 드러나게 하기 위해서입니다.
+
+호스트 없이 루프 전체를 시험해 보세요:
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
+```
+
+---
+
 ## 오프라인 명령
 
 ```bash
@@ -223,7 +267,7 @@ python3 -m offline.cli rollback --constants constants.json
 ## 검증
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237개
+python3 -B -m unittest discover -s tests -t .     # 267개
 ```
 
 합성 텔레메트리 단대단(작업 400개, seed 61, 환경 `m-a|h-a`, 단계 이벤트 15 047개, 완전한 작업 351개,

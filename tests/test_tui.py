@@ -2,6 +2,7 @@ import unicodedata
 import unittest
 
 from agent_elapsed.hooks import TaskView, WidgetState
+from agent_elapsed.presentation import format_expectation
 from agent_elapsed.tui import render_tui
 from tests.test_hooks import prediction
 
@@ -14,7 +15,7 @@ class TuiTest(unittest.TestCase):
         state = WidgetState((TaskView("a", "修复登录", 70, prediction()),))
         text = render_tui(state)
         self.assertIn("修复登录", text)
-        self.assertIn("大约 2–3 分钟", text)
+        self.assertIn(format_expectation(120, 180), text)
         self.assertIn("已用 1 分钟", text)
         self.assertNotIn("%", text)
         self.assertNotIn("\x1b", text)

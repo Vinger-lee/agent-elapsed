@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Étoiles">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="Licence : MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-237%20passing-22bb33" alt="237 tests">
+  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="Exécution : numpy uniquement">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Modèle">
   <br>
@@ -156,6 +156,55 @@ sur base fixe, deux franchissements ; la base n'intègre jamais les données tes
 
 ---
 
+## Enregistrer la télémétrie (la boucle qui rend l'auto-correction réelle)
+
+Rien de ce qui précède n'apprend jamais rien tant que des durées réelles n'arrivent pas dans le
+store. `ElapsedHooks` ne fait que dessiner le widget ; `TelemetryStore` ne fait qu'ajouter des lignes
+validées. `TelemetryRecorder` est l'adaptateur qui transforme l'un en l'autre, et c'est la différence
+entre « une belle estimation » et « une estimation qui s'améliore » :
+
+```python
+from agent_elapsed import ElapsedHooks, TelemetryRecorder, TelemetryStore, load_tables, pick_env
+
+table = pick_env(load_tables("constants.json"), "my-model|my-host")
+store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.jsonl")
+
+with ElapsedHooks(table) as hooks:
+    recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
+
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
+    with recorder.step("t-1", "llm"):
+        ...                       # 一次 LLM 往返
+    with recorder.step("t-1", "tool", tool="pytest") as step:
+        ...
+        step["ok"] = False        # 失败步骤照样记录时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
+```
+
+Choix inscrits dans l'adaptateur, chacun pour une raison :
+
+* **Les étapes sont écrites immédiatement**, pas à la fin de la tâche. Si l'hôte plante ou si
+  l'utilisateur annule, les étapes déjà passées sont des observations complètes — exactement les
+  données dont la gestion de la censure a besoin.
+* **`cancel()` marque la tâche comme censurée** : le temps mural d'une tâche annulée n'est qu'une
+  borne inférieure, il ne doit donc entrer ni dans les comptages, ni dans la couverture, ni dans
+  l'acceptation. Ses étapes informent quand même les longueurs d'étape.
+* **`fail()` est une observation complète** : la tâche s'est réellement terminée et a réellement
+  consommé ce temps.
+* **Une tâche sans features est tout de même enregistrée** (`g_pred` = `{}`). Perdre une durée
+  réelle parce que le classifieur n'avait pas encore tourné biaiserait l'échantillon ; à la place,
+  `offline.partition.partition_tasks` met la ligne en quarantaine et la compte, de sorte que le saut
+  soit visible plutôt que silencieux.
+
+Essayez toute la boucle sans aucun hôte :
+
+```bash
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
+```
+
+---
+
 ## Commandes hors ligne
 
 ```bash
@@ -193,7 +242,7 @@ Deux tables JSONL en ajout seul ; dérivés non stockés (`X`, `n_j`).
 ## Vérification
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 237 tests
+python3 -B -m unittest discover -s tests -t .     # 267 tests
 ```
 
 Bout en bout, synthétique : 400 tâches, graine 61, `m-a|h-a`, 15 047 événements, 351 complètes, 32 holdout.
