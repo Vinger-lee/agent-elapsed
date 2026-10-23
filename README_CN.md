@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 项测试">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268 项测试">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="运行时仅 numpy">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="模型">
   <br>
@@ -76,7 +76,7 @@
 
 ```bash
 python3 -c "import numpy; print(numpy.__version__)"   # 需要 ≥2.0
-python3 -m unittest discover -s tests -t . -v          # 267 项
+python3 -m unittest discover -s tests -t . -v          # 268 项
 ```
 
 或者装成包直接用脚本：
@@ -405,7 +405,7 @@ agent-elapsed/
 ├── examples/tui_host.py         # 终端里的完整宿主生命周期
 ├── examples/record_telemetry.py # 整条闭环：hooks → store → refit → report
 ├── docs/                        # 见下方文档表
-└── tests/                       # 267 项测试，仅标准库 unittest
+└── tests/                       # 268 项测试，仅标准库 unittest
 ```
 
 ---
@@ -413,7 +413,7 @@ agent-elapsed/
 ## 验证
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267 项
+python3 -B -m unittest discover -s tests -t .     # 268 项
 ```
 
 合成遥测端到端（400 任务、seed 61、环境 `m-a|h-a`、15047 条步事件、351 个完整任务、32 个留出任务）：

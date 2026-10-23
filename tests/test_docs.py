@@ -134,6 +134,42 @@ class ReadmeNumbersTest(unittest.TestCase):
         self.assertEqual(quoted, actual,
                          f"README 徽章写 {quoted} 项，实际集合有 {actual} 项")
 
+    def test_code_blocks_are_never_translated(self):
+        """带语言标签的代码块（命令、示例）必须与英文主 README 逐字一致。
+
+        公式块允许译注（例如 "(independent of φ)" → "(与 φ 无关)"），但命令与代码是复制粘贴
+        材料：一旦被"顺手翻译"，读者复制到的就是跑不通的东西。
+        """
+        def blocks(text):
+            out, cur, lang = [], None, None
+            for line in text.splitlines():
+                if line.startswith("```"):
+                    if cur is None:
+                        cur, lang = [], line[3:].strip()
+                    else:
+                        out.append((lang, "\n".join(cur)))
+                        cur, lang = None, None
+                    continue
+                if cur is not None:
+                    cur.append(line)
+            return [(l, b) for l, b in out if b.strip()]
+
+        def command_part(lang, body):
+            """bash 块里的 `# 注释` 允许本地化；命令行本身必须与原版一致。"""
+            if lang != "bash":
+                return body
+            return "\n".join(line.split("#", 1)[0].rstrip() for line in body.splitlines())
+
+        tagged = {(lang, command_part(lang, body))
+                  for lang, body in blocks(_read("README.md")) if lang}
+        for relative in LANGUAGE_FILES[2:]:        # 六份译文；中英两份是权威版本
+            for lang, body in blocks(_read(relative)):
+                if not lang:
+                    continue                       # 纯公式块允许保持原文 + 译注
+                with self.subTest(file=relative, lang=lang):
+                    self.assertTrue((lang, command_part(lang, body)) in tagged,
+                                    f"{relative} 的 {lang} 代码块与英文主 README 不一致")
+
     def test_key_figures_appear_in_every_language(self):
         """证据类数字不许在翻译里漂：每份译文都必须保留这些原始数字。"""
         figures = ("0.594", "0.844", "0.969", "242.8", "481.9", "2.234")

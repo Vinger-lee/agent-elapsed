@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="numpy only">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Model">
   <br>
@@ -194,7 +194,7 @@ JSONL, только добавление строк.
 ## Проверка
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267 tests
+python3 -B -m unittest discover -s tests -t .     # 268 tests
 ```
 
 Синтетика: 400 задач, seed 61, `m-a|h-a`, 15 047 шагов, 351 полная, 32 отложки.

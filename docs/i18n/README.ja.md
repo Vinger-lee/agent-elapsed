@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="スター数">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="ライセンス: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 件のテスト">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268 件のテスト">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="実行時は numpy のみ">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="モデル">
   <br>
@@ -241,7 +241,7 @@ python3 -m offline.cli rollback --constants constants.json
 ## 検証
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267 tests
+python3 -B -m unittest discover -s tests -t .     # 268 tests
 ```
 
 合成テレメトリのエンドツーエンド(400 タスク、seed 61、環境 `m-a|h-a`、15047 ステップイベント、351 完了タスク、32 ホールドアウト):

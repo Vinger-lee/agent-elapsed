@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="Runtime: numpy only">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Model">
   <br>
@@ -86,7 +86,7 @@ Requirements: Python ≥3.11 and numpy ≥2.0. The test suite uses only the stan
 
 ```bash
 python3 -c "import numpy; print(numpy.__version__)"   # needs >= 2.0
-python3 -m unittest discover -s tests -t . -v          # 267 tests
+python3 -m unittest discover -s tests -t . -v          # 268 tests
 ```
 
 Or install it and use the scripts:
@@ -443,7 +443,7 @@ agent-elapsed/
 ├── examples/tui_host.py         # a complete host lifecycle in a terminal
 ├── examples/record_telemetry.py # the whole loop: hooks → store → refit → report
 ├── docs/                        # see the documentation table below
-└── tests/                       # 267 tests, standard-library unittest only
+└── tests/                       # 268 tests, standard-library unittest only
 ```
 
 ---
@@ -451,7 +451,7 @@ agent-elapsed/
 ## Verification
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267 tests
+python3 -B -m unittest discover -s tests -t .     # 268 tests
 ```
 
 End-to-end on synthetic telemetry (400 tasks, seed 61, environment `m-a|h-a`, 15 047 step events, 351

@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="النجوم">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="numpy">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="النموذج">
   <br>
@@ -226,7 +226,7 @@ JSONL بالإضافة فقط؛ والمشتقات (`X`, `n_j`) لا تُخزَ�
 ## التحقق
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267 tests
+python3 -B -m unittest discover -s tests -t .     # 268 tests
 ```
 
 من طرف إلى طرف (400 مهمة، بذرة 61، `m-a|h-a`، 15 047 حدثًا، 351 مكتملة، 32 holdout):

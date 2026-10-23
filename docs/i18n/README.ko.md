@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267개 테스트 통과">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268개 테스트 통과">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="런타임: numpy만">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="모델">
   <br>
@@ -267,7 +267,7 @@ python3 -m offline.cli rollback --constants constants.json
 ## 검증
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267개
+python3 -B -m unittest discover -s tests -t .     # 268개
 ```
 
 합성 텔레메트리 단대단(작업 400개, seed 61, 환경 `m-a|h-a`, 단계 이벤트 15 047개, 완전한 작업 351개,

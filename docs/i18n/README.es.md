@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Stars">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="Runtime: numpy only">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Model">
   <br>
@@ -193,14 +193,14 @@ store = TelemetryStore("data/events.jsonl", "data/tasks.jsonl", "data/rejects.js
 with ElapsedHooks(table) as hooks:
     recorder = TelemetryRecorder(hooks, store, model_id="my-model", host="my-host")
 
-    recorder.start("t-1", "arreglar la interfaz y ejecutar las pruebas", g=g,
-                   probs=[("patch", .7), ("debug", .3)], long_task=True)
+    recorder.start("t-1", "修复接口并运行测试", g=g, probs=[("patch", .7), ("debug", .3)],
+                   long_task=True)
     with recorder.step("t-1", "llm"):
-        ...                       # una ida y vuelta al LLM
+        ...                       # 一次 LLM 往返
     with recorder.step("t-1", "tool", tool="pytest") as step:
         ...
-        step["ok"] = False        # un paso fallido también registra su duración
-    recorder.finish("t-1")        # cancelar con cancel(), fallar con fail()
+        step["ok"] = False        # 失败步骤照样记录时长
+    recorder.finish("t-1")        # 取消用 cancel()，失败用 fail()
 ```
 
 Decisiones del adaptador, cada una con su motivo:
@@ -219,7 +219,7 @@ Decisiones del adaptador, cada una con su motivo:
 Prueba el bucle completo sin ningún host:
 
 ```bash
-python3 examples/record_telemetry.py --tasks 120 --out demo-data   # graba + intenta un refit
+python3 examples/record_telemetry.py --tasks 120 --out demo-data   # 录制 + 自动尝试一次 refit
 ```
 
 ---
@@ -267,7 +267,7 @@ Reglas que el código impone:
 ## Verificación
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267 pruebas
+python3 -B -m unittest discover -s tests -t .     # 268 pruebas
 ```
 
 Extremo a extremo (400 tareas, semilla 61, `m-a|h-a`, 15 047 eventos, 351 completas, 32 holdout):

@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/github/stars/Vinger-lee/agent-elapsed?style=social" alt="Étoiles">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="Licence : MIT">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-267%20passing-22bb33" alt="267 tests">
+  <img src="https://img.shields.io/badge/tests-268%20passing-22bb33" alt="268 tests">
   <img src="https://img.shields.io/badge/runtime-numpy%20only-013243" alt="Exécution : numpy uniquement">
   <img src="https://img.shields.io/badge/model-compound%20Poisson%20%C3%97%20lognormal-8957e5" alt="Modèle">
   <br>
@@ -242,7 +242,7 @@ Deux tables JSONL en ajout seul ; dérivés non stockés (`X`, `n_j`).
 ## Vérification
 
 ```bash
-python3 -B -m unittest discover -s tests -t .     # 267 tests
+python3 -B -m unittest discover -s tests -t .     # 268 tests
 ```
 
 Bout en bout, synthétique : 400 tâches, graine 61, `m-a|h-a`, 15 047 événements, 351 complètes, 32 holdout.

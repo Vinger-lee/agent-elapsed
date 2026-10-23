@@ -9,7 +9,7 @@
 
 ```bash
 python3 -B -m unittest discover -s tests -t .
-# Ran 267 tests ... OK
+# Ran 268 tests ... OK
 ```
 
 覆盖范围：运行时依赖与 I/O 边界、确定性与种子契约、schema/拒绝留痕、21 列 one-hot 编码、
@@ -17,7 +17,7 @@ NIG 参数回收、计数回归与信息泄漏守卫、取消任务分流、PIT/
 原子替换与回滚、漂移检测、离线 CLI、HTML 复盘报告、端到端恢复，
 以及 `docs/math-upgrade.md` 逐条对应的数学不变量（`tests/test_math_upgrade.py`，23 项）。
 
-历史计数（同一份代码基线随增量演进）：157 → 193 → 205 → 237 → **267**。
+历史计数（同一份代码基线随增量演进）：157 → 193 → 205 → 237 → **268**。
 
 ## 2. 合成遥测全流程
 
