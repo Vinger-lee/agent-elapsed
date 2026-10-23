@@ -7,9 +7,11 @@ dist/
 .venv/
 venv/
 
-# 本地遥测与拟合产物从不入库：真实日志属于部署方，不属于本仓库
-data/
-out/
-output/
+# 本地遥测与拟合产物从不入库：真实日志属于部署方，不属于本仓库。
+# 只忽略仓库根下的 data/、out/、output/ —— 写成 `data/` 会把
+# agent_elapsed/data/（随包分发的冷启动先验）一起吞掉，装出来就是个残包。
+/data/
+/out/
+/output/
 *.jsonl
 constants.prev.json
