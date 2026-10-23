@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# 本地遥测与拟合产物从不入库：真实日志属于部署方，不属于本仓库
+data/
+out/
+output/
+*.jsonl
+constants.prev.json

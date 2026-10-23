@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-elapsed"
+version = "1.1.0"
+description = "Elapsed-time estimation widget for long-running agent tasks: compound Poisson x lognormal, closed-form moments, Monte Carlo quantiles."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["agent", "elapsed-time", "compound-poisson", "lognormal", "calibration"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = ["numpy>=2.0"]
+
+[tool.setuptools]
+packages = ["agent_elapsed", "offline"]
+
+[tool.unittest]
+# 测试用标准库 unittest：运行时只需要 numpy，不为一个测试框架增加依赖。
+# python3 -m unittest discover -s tests -t .

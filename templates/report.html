@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Agent 用时预估</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1b1f24; --muted:#5b6570; --band:#3b82f6;
+          --bg:#ffffff; --card:#f6f8fa; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --muted:#9da7b3;
+          --bg:#0d1117; --card:#161b22; --band:#60a5fa; } }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--fg);
+         font:15px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  main { max-width:640px; margin:0 auto; }
+  h1 { font-size:17px; margin:0 0 14px; font-weight:600; }
+  .card { background:var(--card); border-radius:10px; padding:16px; margin-bottom:14px; }
+  .band { font-size:30px; font-weight:650; letter-spacing:.3px; }
+  .track { position:relative; height:14px; border-radius:7px; background:rgba(127,127,127,.18);
+           margin:14px 0 6px; }
+  .fill { position:absolute; top:0; bottom:0; border-radius:7px; background:var(--band);
+          opacity:.75; }
+  .marker { position:absolute; top:-5px; width:2px; height:24px; background:var(--fg); }
+  .badge { display:inline-block; font-size:12px; color:var(--muted);
+           border:1px solid rgba(127,127,127,.35); border-radius:999px; padding:2px 9px; }
+  ul { list-style:none; padding:0; margin:10px 0 0; }
+  li { display:flex; justify-content:space-between; gap:12px; padding:3px 0; font-size:14px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .share-track { height:5px; background:rgba(127,127,127,.12); margin-bottom:9px; border-radius:3px; }
+  .share-fill { height:100%; background:var(--band); border-radius:3px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 4px; border-bottom:1px solid rgba(127,127,127,.18); }
+</style>
+</head>
+<body>
+<main>
+  <h1>这个任务大约要多久</h1>
+  <div class="card">
+    <div class="band" id="band"></div>
+    <div class="track"><div class="fill" id="fill"></div><div class="marker" id="marker" hidden></div></div>
+    <div><span class="badge" id="badge"></span></div>
+  </div>
+  <div class="card">
+    <div class="muted">时间去向</div>
+    <ul id="contrib"></ul>
+  </div>
+  <div class="card" id="review" hidden>
+    <div class="muted">复盘 · 预估 vs 实际</div>
+    <div id="review-body"></div>
+  </div>
+  <div class="card" id="score" hidden>
+    <div class="muted">命中率</div>
+    <div id="score-body"></div>
+  </div>
+  <p class="muted" id="note"></p>
+  <div class="card" id="groups-card" hidden>
+    <div class="muted">按任务类型复盘 · 最近 100 个完整任务</div>
+    <table><thead><tr><th>任务类型</th><th>任务数</th><th>P90 覆盖</th><th>Pinball（秒）</th></tr></thead><tbody id="groups"></tbody></table>
+  </div>
+</main>
+<script>
+const DATA = __DATA__;
+const el = (id) => document.getElementById(id);
+el('band').textContent = DATA.band;
+el('badge').textContent = DATA.badge;
+el('note').textContent = DATA.note;
+const ul = el('contrib');
+DATA.contributions.forEach(([label, pct], index) => {
+  const li = document.createElement('li');
+  const a = document.createElement('span'); a.textContent = label;
+  const b = document.createElement('span'); b.className = 'muted'; b.textContent = pct;
+  li.append(a, b); ul.append(li);
+  const row = DATA.contribution_bars[index];
+  const track = document.createElement('div'); track.className = 'share-track';
+  const fill = document.createElement('div'); fill.className = 'share-fill';
+  fill.style.width = row.width_pct + '%';
+  track.setAttribute('aria-label', row.label);
+  track.append(fill); ul.append(track);
+});
+const t = DATA.track;
+if (t) {
+  el('fill').style.left = t.left_pct + '%';
+  el('fill').style.width = t.width_pct + '%';
+}
+if (DATA.review && t && t.marker_pct !== null) {
+  el('review').hidden = false;
+  el('review-body').textContent =
+    `实际 ${DATA.review.actual_label} · 落点${DATA.review.in_band ? '带内' : '带外'}`;
+  el('marker').hidden = false;
+  el('marker').style.left = t.marker_pct + '%';
+} else if (DATA.review) {
+  el('review').hidden = false;
+  el('review-body').textContent = `实际 ${DATA.review.actual_label}`;
+}
+if (DATA.scorecard) {
+  el('score').hidden = false;
+  el('score-body').textContent =
+    `过去 ${DATA.scorecard.n} 个任务，实际用时未超过 P90 上限的有 ${DATA.scorecard.hit} 个`;
+}
+if (DATA.groups.length) {
+  el('groups-card').hidden = false;
+  DATA.groups.forEach((row) => {
+    const tr = document.createElement('tr');
+    [row.task_class, row.n, row.coverage, row.pinball_seconds].forEach((value) => {
+      const td = document.createElement('td'); td.textContent = value; tr.append(td);
+    });
+    el('groups').append(tr);
+  });
+}
+</script>
+</body>
+</html>

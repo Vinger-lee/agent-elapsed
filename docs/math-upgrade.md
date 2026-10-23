@@ -1,0 +1,210 @@
+# 数学升级说明（v1.1）
+
+本文记录 2026-10 对公式层做的一轮优化：改了什么、为什么改、怎么验证的、哪些**没有**改。
+分布族（复合泊松 × 对数正态）、串行求和假设、蒙特卡洛分位数、种子语义都没有变；
+变的是 φ 的语义与求解、矩的求值路径、分位数不确定度的暴露方式，以及拟合器与统计量的数值细节。
+
+复现全部证据：
+
+```bash
+python3 -m unittest discover -s tests -t . -v      # 229 项
+```
+
+---
+
+## 1. φ 从"加宽 σ"改成"保均值的纯离散度"
+
+### 旧行为
+
+\[
+s_j^2=\sigma_j^2\max(\phi,1),\qquad
+E[X_j]=e^{\mu_j+s_j^2/2},\qquad
+E[X_j^2]=e^{2\mu_j+2s_j^2}.
+\]
+
+σ 被放大而 μ 不动，于是 φ>1 同时抬高 \(E[X_j]\)、抬高 \(E[T]\)、抬高中位数以上的所有尺度。
+结果是：用来修"离散度不足"的旋钮顺手改了均值，门禁里离散度检查的目标量与它实际修的东西不是同一个量。
+旧审计文档为此把 φ 标成"启发式，会同时改变均值与方差"。
+
+### 新行为（`ConstTable.log_params`）
+
+\[
+\mu_j^{\text{eff}}=\mu_j-\frac{s_j^2-\sigma_j^2}{2},\qquad s_j^2=\sigma_j^2\max(\phi,1),
+\]
+
+\[
+E[X_j]=e^{\mu_j+\sigma_j^2/2}=\text{与 }\phi\text{ 无关},\qquad
+E[X_j^2]=E[X_j]^2e^{s_j^2}.
+\]
+
+即 φ 是**保均值的一阶随机占优**：均值不动、中位数下移、右尾变长，方差单调上升。
+这是准似然/离散度参数的标准做法（quasi-Poisson 式：只放大方差，不动均值），
+也是采样路径和闭式矩现在共用的唯一参数入口——两边都调 `log_params`，
+避免"σ 用放大后的、μ 用未补偿的"这种错配再次出现。
+
+可见后果：同一张常数表在 φ>1 时，**均值/期望贡献不变，区间更宽**。
+`EstResult.expected` 由此不再随 φ 漂移。
+
+验证：`tests/test_math_upgrade.py::MeanPreservingDispersionTest`
+（φ∈{1,2,7.5,25} 下 `expected` 逐位相同；`E[X²]/E[X]² = exp(s²)`；采样二阶矩与闭式一致；CV² 随 φ 单调）。
+
+---
+
+## 2. φ 的求解：从比值启发式改成单调解析求根
+
+### 结构
+
+φ 只进入二阶矩，且只经 \(e^{\phi\sigma_j^2}\) 进入，所以模型的平均相对方差对 φ 是**指数和**：
+
+\[
+\overline{\mathrm{CV}^2}(\phi)
+=\underbrace{\overline{\frac{\mathrm{Var}_{\text{between}}(T_t)}{E[T_t]^2}}}_{\text{与 }\phi\text{ 无关}}
++\sum_j B_j e^{\phi\sigma_j^2},\qquad
+B_j=\overline{\frac{\bar\lambda_{tj}\,E[X_j]^2}{E[T_t]^2}} .
+\]
+
+推导要点：给定类别 \(c\) 时 \(\mathrm{Var}(T\mid c)=\sum_j\lambda_{jc}E[X_j^2]\)；
+按 \(p_c\) 平均后只有 \(\bar\lambda_{tj}=\sum_c p_c\lambda_{jc}\) 留下（线性），
+而类别间方差 \(\sum_c p_c(M_c-\bar M)^2\) 只依赖 \(E[X_j]\)，因此与 φ 完全无关。
+旧实现把这一项漏在 φ 的分子里，混合分布的离散度会被判成"还差得远"，φ 直接夹到上限 25
+（回归测试 `tests/test_math_audit.py::test_phi_does_not_mislabel_class_uncertainty_as_extra_noise` 抓到过这一点）。
+
+### 求解
+
+目标 \(r=\overline{\left((y_t-E[T_t])/E[T_t]\right)^2}\) 来自留出残差；\(f(\phi)=\overline{\mathrm{CV}^2}(\phi)-r\)
+在 \([1,25]\) 上严格单调不减，于是用二分求根（64 次，精度远优于双精度余量）：
+
+* \(f(1)\ge0\) → \(\phi=1\)（模型已经够散，不许借 φ 把区间缩窄到步长噪声以下）；
+* \(f(25)\le0\) → \(\phi=25\)（连上限都不够，夹住，不当它被修好）；
+* 否则内点解，此时**解析 CV² 与残差完全相等**（测试断言到 1e-9）。
+
+等 σ 的特例有闭式解，可用来交叉检查：
+
+\[
+\overline{\mathrm{CV}^2}(\phi)=\frac{e^{\phi\sigma^2}}{\sum_j\bar\lambda_j}
+\;\Longrightarrow\;
+\phi=1+\frac{\ln r}{\sigma^2}.
+\]
+
+验证：`DispersionSolveTest`（内点解精确性、噪声放大后 φ>1、无噪声时 φ=1、删失/异版本任务被忽略、空输入返回下界）。
+端到端（400 条合成任务，环境 `m-a|h-a`）：拟合 φ=**1.4984**，属于内点解而非拍脑袋的 25。
+
+---
+
+## 3. 步长矩的求值路径
+
+* 一次 `exp` 出二阶矩：`E[X²] = E[X]²·exp(s²)`，不再各算一次 `exp(2μ+2s²)`；φ 只出现在 `exp(s²)` 这个接近 1 的因子里。
+* 所有算子走 `step_log_moments` / `step_moments`，得到非有限值即报错，而不是让 `inf` 静默流进方差。
+* `task_moments` 里步长矩与类别无关，只算一次并向下传递（原来是每个类别重算一遍）。
+* 期望、方差、CV² 的累加统一用 `math.fsum`。
+
+验证：`MeanPreservingDispersionTest::test_second_moment_is_exactly_mean_squared_times_exp_log_variance`
+（与 \(\exp(2\mu^{\text{eff}}+2s^2)\) 的原始定义逐位一致）。
+
+---
+
+## 4. 分位数带上了蒙特卡洛不确定度
+
+5000 条路径给出的 P50/P90 本身有抽样误差，旧接口不暴露它，宿主无法判断这个数字值不值得显示。
+新增秩区间（分布无关，靠二项精确检验反解）：
+
+\[
+\#\{S_i<q_\tau\}\sim\mathrm{Binomial}(m,\tau)
+\;\Longrightarrow\;
+\Big(S_{(k-h)},\,S_{(k+h)}\Big),\quad k=m\tau,\quad h=z_{.975}\sqrt{m\tau(1-\tau)} .
+\]
+
+选秩区间而不是密度/核方法，是因为零步骤原子让 \(f(q)\) 不存在，
+而秩区间在原子处自然退化成一点（`(0,0)`），不会给出虚假的窄区间。
+
+`predict()` 现在返回 `p50_ci/p90_ci/p50_se/p90_se`，`EstResult` 多出 `p50_se/p90_se`
+（接口变更：`to_dict()` 的键集合增加了两个字段，宿主可忽略）。
+
+验证与量级：
+
+* `QuantileIntervalTest` 中 300 次重复、m=2000 的名义 95% 区间实测覆盖 **0.960（τ=0.5）与 0.960（τ=0.9）**；
+* 真值表 m=5000 时 P50 区间宽约 ±22 s（SE≈11 s）、P90 约 ±89 s（SE≈46 s）——这就是 5000 条路径的分辨率上限；
+* 重尾代价：φ=4（步长对数方差 2.77）时，样本方差在 120k 路径下只到解析值的 83%，400k 才到 96%。
+  分位数比方差稳得多，但"把 m 调大"不是免费的，这一点现在有数字可依。
+
+---
+
+## 5. 计数回归（IRLS / Newton）的数值改进
+
+`offline/fit_counts.fit_ridge_poisson`：
+
+| 项 | 旧 | 新 | 理由 |
+| --- | --- | --- | --- |
+| 截距初值 | 未加权 `y.mean()` | **加权**均值率 | 折扣权重下未加权初值系统性偏移，且与目标函数不一致 |
+| 惩罚 | 22×22 矩阵乘 | 对角向量 | 惩罚本来就是 `ridge·‖β‖²`，省掉两次方阵乘 |
+| 线性解 | `np.linalg.solve`（LU）+ 1e-9 抖动 | **Cholesky**，失败再加尺度相关抖动，再失败 `lstsq` | Hessian 对称正定，Cholesky 更快且拒绝非正定输入 |
+| 收敛判据 | 只看步长 | 梯度 ∞-范数 ≤ `gtol` **或** 步长 < `tol` | 目标平坦时旧判据会带着半解的方向停下 |
+| 回溯接受 | 绝对 `1e-12` | 相对 `1e-12·max(1,|f|)` | 目标量级大时旧判据等价于"永远接受" |
+
+保持不变并被测试锁住的代数性质：截距不受惩罚 ⟹ 加权版 **Σŵλ̂ = Σŵy**
+（`RidgePoissonConvergenceTest::test_intercept_keeps_the_score_equation_under_weights`），
+以及"读 `g_final` 即泄漏"的回归（`tests/test_fit_counts.py`）。
+
+---
+
+## 6. 步长后验（NIG）的求和方式
+
+`offline/fit_step.posterior` 的散度项改为：先减去先验均值做位移、再用 `fsum` 精确累加，
+并且不写成 \(\sum x^2-(\sum x)^2/n\) 这种一步展开式（偏移大、离散小时会灾难性抵消）。
+
+**老实说明**：现实的对数步长 (μ≈0–5) 下，原来那个两遍 `dot` 写法本来就够准——实测两者与 60 位 Decimal
+参考的相对差都在 1e-16 量级。所以这一项是稳健性与可读性，不是"修掉了一个精度 bug"。
+`NIGNumericalStabilityTest` 把结果钉在 Decimal 参考上（1e-11），并额外断言实现没有回落到一步展开式。
+
+---
+
+## 7. 损失函数单一来源 + 配对差的统计
+
+* `offline/calibrate.interval_loss(y, samples)` 现在是 (P50, P90) 平均 pinball 的唯一实现，
+  `gate.evaluate` 与 `drift.per_task_pinball` 都调它——两处各写一遍公式，迟早分数不可比。
+* `gate.evaluate` 额外输出 `paired_diff / paired_diff_se / paired_z`，
+  并接受 `min_effect`（默认 0，判据与旧版逐字等价）：默认行为不变，
+  但拒绝/接受的理由现在带着配对差的标准误，一眼能看出是不是蒙特卡洛抖动。
+
+端到端实测：候选 vs 在线版 `paired_z=-2.71`（候选显著更好），P90 上限覆盖率 0.882（τ=0.9，容差 0.103），KS p=0.968。
+
+---
+
+## 8. 明确**没有**做的（以及为什么）
+
+* **没有**引入正态近似求分位数。闭式只到矩，分位数仍是蒙特卡洛。
+* **没有**把 KS 的 p 值换成"精确算法"。当前用的是 Stephens 修正的渐近级数，
+  在门禁的 n≈20–100、阈值 p>0.05 附近够用；换成 Durbin/Marsaglia 那类精确矩阵法需要
+  单独验证实现，否则只是把"近似"换成"未经证明的精确"，不如保留并写明近似性质。
+* **没有**改成分层/拉丁超立方采样。它确实能降低计数维度的方差，但会破坏
+  (y, S₁…S_m) 的可交换性，而随机化预测秩（PIT）的一致性正是靠这个可交换性；不值得为省一点 m 冒这个风险。
+* **没有**建模并行执行图、重试相关性、未记录排队。这些缺口在 `docs/accuracy-audit.md` 第 6 节原样保留。
+* **没有**用真实日志验证准确率。仓库里没有 `data/`，`constants.json` 仍是冷启动先验；
+  下面所有数字都是合成数据或独立数值实验，不是真实 Agent 的预测准确率。
+
+---
+
+## 9. 验证记录
+
+环境：CPython 3.14.7、numpy 2.4.3（`pyproject.toml` 要求 ≥3.11）。运行：
+
+```bash
+python3 -B -m unittest discover -s tests -t .
+# Ran 229 tests ... OK   （升级前 205 项，其中 1 项在 3.14 上因 JSON 扫描器不再递归而误报，已改为解释器无关）
+```
+
+新增回归文件 `tests/test_math_upgrade.py`（23 项）覆盖本文第 1–7 节；
+被改写的既有断言（φ 语义、`EstResult` 键集合）都换成新不变量的形式，没有留下"照抄旧实现"的测试。
+
+端到端（400 条合成任务、环境 `m-a|h-a`、隐藏真值 `offline.synth.HIDDEN_TRUTH`）：
+
+```text
+refit  → accepted；φ=1.4984（内点解）
+步长回收：llm μ=2.150/σ=0.916  (真值 2.197/0.90)
+          tool μ=0.797/σ=0.717 (真值 0.788/0.72)
+          build μ=5.374/σ=1.170(真值 5.347/1.10)
+          net μ=1.831/σ=0.888  (真值 1.792/0.88)
+留出：n=34  P50=0.500  P80=0.794  P90=0.882  KS p=0.968  配对 z=-2.71
+```
+
+这些数字说明公式实现内部自洽、能从合成数据回收真值，**不**说明真实 Agent 的耗时服从本模型。
